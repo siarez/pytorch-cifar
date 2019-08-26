@@ -96,6 +96,7 @@ class Conv2DCustom(nn.Conv2d):
         # That is, for a kernel(aka output channel) either all backwards weights of an input channel are 0 to all are 1.
         self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() > 0.5).float()  # random binary
         self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
+        self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
 
     def forward(self, x):
         return Conv2DFunctionCustom.apply(x, self.weight, self.weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups)
