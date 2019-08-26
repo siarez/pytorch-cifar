@@ -108,12 +108,13 @@ Linear = None
 def ResNet18(normal=False):
     global Conv2d
     global Linear
+    Linear = LinearNormal
     if normal:
         Conv2d = Conv2dNormal
-        Linear = LinearNormal
+        # Linear = LinearNormal
     else:
         Conv2d = Conv2DCustom
-        Linear = LinearCustom
+        # Linear = LinearCustom
     return ResNet(BasicBlock, [2,2,2,2])
 
 def ResNet34():
