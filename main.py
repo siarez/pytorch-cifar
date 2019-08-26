@@ -13,11 +13,12 @@ import argparse
 
 from models import *
 from utils import progress_bar
-
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
+parser.add_argument('--normal', action='store_true', default=False)
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -49,7 +50,7 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 # Model
 print('==> Building model..')
 # net = VGG('VGG19')
-# net = ResNet18()
+net = ResNet18(args.normal)
 # net = PreActResNet18()
 # net = GoogLeNet()
 # net = DenseNet121()
@@ -60,7 +61,7 @@ print('==> Building model..')
 # net = ShuffleNetG2()
 # net = SENet18()
 # net = ShuffleNetV2(1)
-net = EfficientNetB0()
+# net = EfficientNetB0()
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
@@ -85,7 +86,8 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
+    pbar = tqdm(enumerate(trainloader), total=len(trainloader))
+    for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = net(inputs)
@@ -97,9 +99,9 @@ def train(epoch):
         _, predicted = outputs.max(1)
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
-
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-            % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total))
+        # progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+        #     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
 def test(epoch):
     global best_acc
