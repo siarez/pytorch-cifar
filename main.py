@@ -50,7 +50,7 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 
 # Model
 print('==> Building model..')
-net = VGG('VGG19')
+net = VGG('VGG19', normal=args.normal)
 # net = ResNet18(args.normal)
 # net = PreActResNet18()
 # net = GoogLeNet()
