@@ -12,7 +12,7 @@ import os
 import argparse
 
 from models import *
-from utils import progress_bar
+# from utils import progress_bar
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
@@ -110,7 +110,8 @@ def test(epoch):
     correct = 0
     total = 0
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
+        pbar = tqdm(enumerate(trainloader), total=len(trainloader))
+        for batch_idx, (inputs, targets) in pbar:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
@@ -119,8 +120,7 @@ def test(epoch):
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
-
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+            pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)'
                 % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
     # Save checkpoint.
