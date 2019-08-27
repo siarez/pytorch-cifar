@@ -76,8 +76,10 @@ class Conv2DFunctionCustom(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        # import pydevd
-        # pydevd.settrace(suspend=True, trace_only_current_thread=True)
+        #import pdb
+        #pdb.Pdb(nosigint=True).set_trace()
+        #import pydevd
+        #pydevd.settrace(suspend=True, trace_only_current_thread=True)
         input, weight, b_weights, bias = ctx.saved_tensors
         stride, padding, dilation, groups = ctx.stride, ctx.padding, ctx.dilation, ctx.groups
         grad_input = grad_weight = grad_b_weights = grad_bias = grad_stride = grad_padding = grad_dilation = grad_groups = None
@@ -96,7 +98,9 @@ class Conv2DCustom(nn.Conv2d):
                                            dilation=dilation, groups=groups, bias=bias)
         # The backward weights are created such that a kernel either sends gradients to a previous channel or it doesn't
         # That is, for a kernel(aka output channel) either all backwards weights of an input channel are 0 to all are 1.
-        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False).uniform_() > 0.0).float()  # random binary
+        weight_scale = torch.sqrt(torch.tensor(in_channels * (kernel_size**2)*1.0))
+        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False).uniform_() > 0.6).float()/(weight_scale/0.6)  # random binary
+        # self.weight_bw = torch.randn((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False) / weight_scale
         # self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
         self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
 
