@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--decay', default=5e-4, type=float, help='weight decay')
 parser.add_argument('--mom', default=0.9, type=float, help='momentum')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -79,7 +80,7 @@ if args.resume:
     start_epoch = checkpoint['epoch']
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=5e-4)
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=args.decay)
 
 # Training
 def train(epoch):
