@@ -84,7 +84,7 @@ class Conv2DFunctionCustom(Function):
         stride, padding, dilation, groups = ctx.stride, ctx.padding, ctx.dilation, ctx.groups
         grad_input = grad_weight = grad_b_weights = grad_bias = grad_stride = grad_padding = grad_dilation = grad_groups = None
         if ctx.needs_input_grad[0]:
-            grad_input = torch.nn.grad.conv2d_input(input.shape, b_weights, grad_output, stride, padding, dilation, groups)
+            grad_input = torch.nn.grad.conv2d_input(input.shape, b_weights * weight, grad_output, stride, padding, dilation, groups)
         if ctx.needs_input_grad[1]:
             grad_weight = torch.nn.grad.conv2d_weight(input, weight.shape, grad_output, stride, padding, dilation, groups)
         if ctx.needs_input_grad[3]:
@@ -100,9 +100,10 @@ class Conv2DCustom(nn.Conv2d):
         # That is, for a kernel(aka output channel) either all backwards weights of an input channel are 0 to all are 1.
         sparsity = 0.6
         weight_scale = torch.sqrt(torch.tensor(in_channels * (kernel_size**2)*1.0))
-        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() > sparsity).float()/(weight_scale/sparsity)  # random binary
-        # self.weight_bw = torch.randn((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False) / weight_scale
+        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() > sparsity).float()  # random binary
         self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
+        # /(weight_scale/sparsity)
+        # self.weight_bw = torch.randn((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False) / weight_scale
         self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
 
     def forward(self, x):
