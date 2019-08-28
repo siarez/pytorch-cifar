@@ -15,13 +15,14 @@ cfg = {
 Conv2d = None
 
 class VGG(nn.Module):
-    def __init__(self, vgg_name, normal=False):
+    def __init__(self, vgg_name, normal=False, sparsity=0.0):
         super(VGG, self).__init__()
         global Conv2d
         if normal:
             Conv2d = Conv2dNormal
         else:
             Conv2d = Conv2DCustom
+            Conv2d.sparsity = sparsity
         self.features = self._make_layers(cfg[vgg_name])
         self.classifier = nn.Linear(512, 10)
 

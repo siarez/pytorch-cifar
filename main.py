@@ -18,8 +18,9 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--mom', default=0.9, type=float, help='momentum')
+parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--normal', action='store_true', default=False)
+parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -50,7 +51,7 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 
 # Model
 print('==> Building model..')
-net = VGG('VGG19', normal=args.normal)
+net = VGG('VGG19', normal=args.normal, sparsity=args.sparsity)
 # net = ResNet18(args.normal)
 # net = PreActResNet18()
 # net = GoogLeNet()
