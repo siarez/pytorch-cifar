@@ -102,16 +102,16 @@ class Conv2DCustom(nn.Conv2d):
         weight_scale = torch.sqrt(torch.tensor(in_channels * (kernel_size**2)*1.0))
         self.sparsity_scaling = (torch.tensor(1 - Conv2DCustom.sparsity)) 
         # nonlocal sparsity
-        # self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
-        # self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
+        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
+        self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
         # /(weight_scale/sparsity)
         # self.weight_bw = torch.randn((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False) / weight_scale
-        # self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
+        self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
 
     def forward(self, x):
-        weight_bw = (torch.zeros_like(self.weight, requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
-        weight_bw = nn.Parameter(weight_bw, requires_grad=False)
-        return Conv2DFunctionCustom.apply(x, self.weight, weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        # weight_bw = (torch.zeros_like(self.weight, requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
+        # weight_bw = nn.Parameter(weight_bw, requires_grad=False)
+        return Conv2DFunctionCustom.apply(x, self.weight, self.weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(
