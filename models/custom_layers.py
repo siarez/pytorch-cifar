@@ -100,7 +100,7 @@ class Conv2DCustom(nn.Conv2d):
         # The backward weights are created such that a kernel either sends gradients to a previous channel or it doesn't
         # That is, for a kernel(aka output channel) either all backwards weights of an input channel are 0 to all are 1.
         weight_scale = torch.sqrt(torch.tensor(in_channels * (kernel_size**2)*1.0))
-        self.sparsity_scaling = torch.sqrt(torch.tensor(1 - Conv2DCustom.sparsity))
+        self.sparsity_scaling = (torch.tensor(1 - Conv2DCustom.sparsity)) 
         # nonlocal sparsity
         # self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
         # self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
@@ -109,9 +109,9 @@ class Conv2DCustom(nn.Conv2d):
         # self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
 
     def forward(self, x):
-        self.weight_bw = (torch.zeros_like(self.weight, requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
-        self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
-        return Conv2DFunctionCustom.apply(x, self.weight, self.weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        weight_bw = (torch.zeros_like(self.weight, requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
+        weight_bw = nn.Parameter(weight_bw, requires_grad=False)
+        return Conv2DFunctionCustom.apply(x, self.weight, weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(
