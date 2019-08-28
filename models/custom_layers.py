@@ -68,9 +68,9 @@ class LinearCustom(nn.Module):
 
 class Conv2DFunctionCustom(Function):
     @staticmethod
-    def forward(ctx, input, weight, b_weights, bias=None, stride=1, padding=0, dilation=1, groups=1):
+    def forward(ctx, input, weight, b_weights, bias=None, stride=1, padding=0, dilation=1, groups=1, scaling=1.0):
         ctx.save_for_backward(input, weight, b_weights, bias)
-        ctx.stride, ctx.padding, ctx.dilation, ctx.groups = stride, padding, dilation, groups
+        ctx.stride, ctx.padding, ctx.dilation, ctx.groups, ctx.scaling = stride, padding, dilation, groups, scaling
         output = torch.nn.functional.conv2d(input, weight, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
         return output
 
@@ -81,15 +81,16 @@ class Conv2DFunctionCustom(Function):
         #import pydevd
         #pydevd.settrace(suspend=True, trace_only_current_thread=True)
         input, weight, b_weights, bias = ctx.saved_tensors
-        stride, padding, dilation, groups = ctx.stride, ctx.padding, ctx.dilation, ctx.groups
-        grad_input = grad_weight = grad_b_weights = grad_bias = grad_stride = grad_padding = grad_dilation = grad_groups = None
+        stride, padding, dilation, groups, scaling = ctx.stride, ctx.padding, ctx.dilation, ctx.groups, ctx.scaling
+        grad_input = grad_weight = grad_b_weights = grad_bias = grad_stride = grad_padding = grad_dilation = grad_groups = grad_scaling = None
         if ctx.needs_input_grad[0]:
+            b_weights = (torch.zeros_like(weight, requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float() / scaling
             grad_input = torch.nn.grad.conv2d_input(input.shape, b_weights * weight, grad_output, stride, padding, dilation, groups)
         if ctx.needs_input_grad[1]:
             grad_weight = torch.nn.grad.conv2d_weight(input, weight.shape, grad_output, stride, padding, dilation, groups)
         if ctx.needs_input_grad[3]:
             grad_bias = grad_output.sum(0, 2, 3).squeeze(0)  # todo: double check
-        return grad_input, grad_weight, grad_b_weights, grad_bias, grad_stride, grad_padding, grad_dilation, grad_groups
+        return grad_input, grad_weight, grad_b_weights, grad_bias, grad_stride, grad_padding, grad_dilation, grad_groups, grad_scaling
 
 
 class Conv2DCustom(nn.Conv2d):
@@ -100,15 +101,16 @@ class Conv2DCustom(nn.Conv2d):
         # The backward weights are created such that a kernel either sends gradients to a previous channel or it doesn't
         # That is, for a kernel(aka output channel) either all backwards weights of an input channel are 0 to all are 1.
         weight_scale = torch.sqrt(torch.tensor(in_channels * (kernel_size**2)*1.0))
+        self.sparsity_scaling = torch.sqrt(torch.tensor(1 - Conv2DCustom.sparsity))
         # nonlocal sparsity
-        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/torch.sqrt(torch.tensor(1-Conv2DCustom.sparsity))  # random binary
-        self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
+        # self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/self.sparsity_scaling  # random binary
+        # self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
         # /(weight_scale/sparsity)
         # self.weight_bw = torch.randn((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False) / weight_scale
-        self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
+        # self.weight_bw = nn.Parameter(self.weight_bw, requires_grad=False)
 
     def forward(self, x):
-        return Conv2DFunctionCustom.apply(x, self.weight, self.weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        return Conv2DFunctionCustom.apply(x, self.weight, self.weight_bw, self.bias, self.stride, self.padding, self.dilation, self.groups, self.sparsity_scaling)
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(
