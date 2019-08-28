@@ -101,7 +101,7 @@ class Conv2DCustom(nn.Conv2d):
         # That is, for a kernel(aka output channel) either all backwards weights of an input channel are 0 to all are 1.
         weight_scale = torch.sqrt(torch.tensor(in_channels * (kernel_size**2)*1.0))
         # nonlocal sparsity
-        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()  # random binary
+        self.weight_bw = (torch.zeros((out_channels, in_channels//groups, 1), requires_grad=False).uniform_() >= Conv2DCustom.sparsity).float()/torch.sqrt(torch.tensor(1-Conv2DCustom.sparsity))  # random binary
         self.weight_bw = self.weight_bw.expand(-1, -1, kernel_size**2).view(out_channels, in_channels//groups, kernel_size, kernel_size)
         # /(weight_scale/sparsity)
         # self.weight_bw = torch.randn((out_channels, in_channels//groups, kernel_size, kernel_size), requires_grad=False) / weight_scale
