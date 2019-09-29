@@ -1,0 +1,69 @@
+'''VGG11/13/16/19 in Pytorch.'''
+import torch
+import torch.nn as nn
+from torch.nn import Conv2d as Conv2dNormal
+from torch.nn import MaxPool2d as MaxPool2dNormal
+from torch.nn import BatchNorm2d as BatchNorm2dNormal
+from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d
+
+
+cfg = {
+    'VGG_mini': [32, 'M', 64, 'M', 128, 128, 'M', 256, 256, 'M', 256, 256, 'M'],
+    'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+}
+
+Conv2d = None
+MaxPool2d = None
+BatchNorm2d = None
+
+class SpatialVGG(nn.Module):
+    def __init__(self, vgg_name, normal=False, sparsity=0.0):
+        super(SpatialVGG, self).__init__()
+        global Conv2d
+        global MaxPool2d
+        global BatchNorm2d
+        if normal:
+            Conv2d = Conv2dNormal
+            MaxPool2d = MaxPool2dNormal
+            BatchNorm2d = MaxPool2dNormal
+        else:
+            Conv2d = SpatialConv2d
+            MaxPool2d = SpatialMaxpool2d
+            BatchNorm2d = SpatialBatchNorm2d
+            Conv2d.sparsity = sparsity
+        self.features = self._make_layers(cfg[vgg_name])
+        if vgg_name == 'VGG_mini':
+            self.classifier = nn.Linear(256 + 5, 10)
+        else:
+            self.classifier = nn.Linear(512 + 5, 10)
+
+    def forward(self, x):
+        out = self.features(x)
+        out = out.view(out.size(0), -1)
+        out = self.classifier(out)
+        return out
+
+    def _make_layers(self, cfg):
+        layers = []
+        in_channels = 3
+        for x in cfg:
+            if x == 'M':
+                layers += [MaxPool2d(kernel_size=2, stride=2)]
+            else:
+                layers += [Conv2d(in_channels, x, kernel_size=3, padding=1),
+                           BatchNorm2d(x)]
+                in_channels = x
+        layers += [nn.BatchNorm2d(in_channels+5), nn.AvgPool2d(kernel_size=1, stride=1)]  # This last batch norm should be normal
+        return nn.Sequential(*layers)
+
+
+def test():
+    net = SpatialVGG('VGG_mini')
+    x = torch.randn(2,3+5,32,32)
+    y = net(x)
+    print(y.size())
+
+# test()

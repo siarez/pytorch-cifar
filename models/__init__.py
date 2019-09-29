@@ -1,4 +1,5 @@
 from .vgg import *
+from .spatial_vgg import SpatialVGG
 from .dpn import *
 from .lenet import *
 from .senet import *
