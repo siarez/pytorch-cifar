@@ -23,6 +23,7 @@ parser.add_argument('--batch', default=128, type=int, help='batch size')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
+parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -53,8 +54,10 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 
 # Model
 print('==> Building model..')
-# net = VGG('VGG19', normal=args.normal)
-net = SpatialVGG('VGG11', normal=args.normal)
+if args.plain:
+    net = VGG('VGG11')
+else:
+    net = SpatialVGG('VGG11', normal=args.normal)
 
 
 net = net.to(device)
@@ -92,7 +95,8 @@ def train(epoch):
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        outputs = net(torch.cat([inputs, shape_map], dim=1))
+        inputs = inputs if args.plain else torch.cat([inputs, shape_map], dim=1)
+        outputs = net(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
@@ -112,9 +116,10 @@ def test(epoch):
     correct = 0
     total = 0
     with torch.no_grad():
-        pbar = tqdm(enumerate(trainloader), total=len(trainloader))
+        pbar = tqdm(enumerate(testloader), total=len(testloader))
         for batch_idx, (inputs, targets) in pbar:
             inputs, targets = inputs.to(device), targets.to(device)
+            inputs = inputs if args.plain else torch.cat([inputs, shape_map], dim=1)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
 

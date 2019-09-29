@@ -15,7 +15,7 @@ cfg = {
 Conv2d = None
 
 class VGG(nn.Module):
-    def __init__(self, vgg_name, normal=False, sparsity=0.0):
+    def __init__(self, vgg_name, normal=True, sparsity=0.0):
         super(VGG, self).__init__()
         global Conv2d
         if normal:
