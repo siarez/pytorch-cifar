@@ -19,6 +19,7 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--decay', default=5e-4, type=float, help='weight decay')
 parser.add_argument('--mom', default=0.9, type=float, help='momentum')
+parser.add_argument('--optim', default='adam', choices=['sgd', 'adam'] help='momentum')
 parser.add_argument('--batch', default=128, type=int, help='batch size')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -59,6 +60,7 @@ if args.plain:
 else:
     net = SpatialVGG('VGG11', normal=args.normal)
 
+print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
 
 net = net.to(device)
 if device == 'cuda':
@@ -75,7 +77,10 @@ if args.resume:
     start_epoch = checkpoint['epoch']
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=args.decay)
+if args.optim == 'sgd':
+    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=args.decay)
+elif args.optim == 'adam':
+    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.decay)
 
 h, w = 32, 32
 shape_map_center = torch.stack(torch.meshgrid(torch.arange(0.5, h, step=1), torch.arange(0.5, w, step=1))).unsqueeze(

@@ -28,7 +28,7 @@ class SpatialVGG(nn.Module):
         if normal:
             Conv2d = Conv2dNormal
             MaxPool2d = MaxPool2dNormal
-            BatchNorm2d = MaxPool2dNormal
+            BatchNorm2d = BatchNorm2dNormal
         else:
             Conv2d = SpatialConv2d
             MaxPool2d = SpatialMaxpool2d
@@ -61,7 +61,8 @@ class SpatialVGG(nn.Module):
 
 
 def test():
-    net = SpatialVGG('VGG_mini')
+    net = SpatialVGG('VGG11')
+    print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
     x = torch.randn(2,3+5,32,32)
     y = net(x)
     print(y.size())

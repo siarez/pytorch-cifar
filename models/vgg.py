@@ -49,6 +49,7 @@ class VGG(nn.Module):
 
 def test():
     net = VGG('VGG11')
+    print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
     x = torch.randn(2,3,32,32)
     y = net(x)
     print(y.size())
