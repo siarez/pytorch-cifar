@@ -79,7 +79,7 @@ shape_map_center = torch.stack(torch.meshgrid(torch.arange(0.5, h, step=1), torc
     0).repeat(args.batch, 1, 1, 1)
 shape_map_var = torch.ones((args.batch, 2, h, w)) / 4  # 4 is a hyper parameter determining the diameter of pixels.
 shape_map_cov = torch.zeros((args.batch, 1, h, w))
-shape_map = torch.cat([shape_map_center, shape_map_var, shape_map_cov], dim=1)
+shape_map = torch.cat([shape_map_center, shape_map_var, shape_map_cov], dim=1).to(device)
 
 # Training
 def train(epoch):
