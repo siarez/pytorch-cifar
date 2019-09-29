@@ -95,7 +95,7 @@ def train(epoch):
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        inputs = inputs if args.plain else torch.cat([inputs, shape_map], dim=1)
+        inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
         outputs = net(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
@@ -119,7 +119,7 @@ def test(epoch):
         pbar = tqdm(enumerate(testloader), total=len(testloader))
         for batch_idx, (inputs, targets) in pbar:
             inputs, targets = inputs.to(device), targets.to(device)
-            inputs = inputs if args.plain else torch.cat([inputs, shape_map], dim=1)
+            inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
 
