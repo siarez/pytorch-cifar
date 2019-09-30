@@ -4,16 +4,15 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
-
 import torchvision
 import torchvision.transforms as transforms
-
 import os
+from os.path import join
+import time
 import argparse
-
 from models import *
-# from utils import progress_bar
 from tqdm import tqdm
+from tensorboardX import SummaryWriter
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -22,7 +21,7 @@ parser.add_argument('--mom', default=0.9, type=float, help='momentum')
 parser.add_argument('--optim', default='adam', choices=['sgd', 'adam'], help='momentum')
 parser.add_argument('--batch', default=128, type=int, help='batch size')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
-parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
+parser.add_argument('--resume', '-r', default='', type=str, help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
 parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
 args = parser.parse_args()
@@ -69,13 +68,20 @@ if device == 'cuda':
 
 if args.resume:
     # Load checkpoint.
-    print('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/ckpt.pth')
+    checkpoint_path = join('./checkpoint/', args.resume)
+    print('==> Resuming from checkpoint: {}'.format(checkpoint_path))
+    assert os.path.isfile(checkpoint_path), 'Error: no checkpoint directory found!'
+    checkpoint = torch.load(checkpoint_path)
     net.load_state_dict(checkpoint['net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
+time_stamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+log_dir = join('./logs', time_stamp)
+os.makedirs(log_dir)
+writer = SummaryWriter(logdir=log_dir, comment=str(args)+'_'+time_stamp, flush_secs=5)
+writer.add_text('args', str(args))
+writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))
 criterion = nn.CrossEntropyLoss()
 if args.optim == 'sgd':
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=args.decay)
@@ -105,14 +111,24 @@ def train(epoch):
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
-
         train_loss += loss.item()
         _, predicted = outputs.max(1)
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-        # progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-        #     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if batch_idx % 10 == 0:
+            for n, p in net.features.named_parameters():
+                # logging histogram of parameters in the "shape pathway"
+                if 'shape' in n or 'conv2' in n:
+                    writer.add_histogram(n+'_grad', p.grad, epoch)
+
+    writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
+    writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
+    for n, p in net.features.named_parameters():
+        # logging histogram of parameters in the "shape pathway"
+        if 'shape' in n or 'conv2' in n:
+            writer.add_histogram(n, p, epoch)
+
 
 def test(epoch):
     global best_acc
@@ -127,13 +143,14 @@ def test(epoch):
             inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
-
             test_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
             pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)'
                 % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        writer.add_scalar('Test Loss', test_loss/(batch_idx+1), epoch)
+        writer.add_scalar('Test Acc.', 100.*correct/total, epoch)
 
     # Save checkpoint.
     acc = 100.*correct/total
@@ -143,13 +160,17 @@ def test(epoch):
             'net': net.state_dict(),
             'acc': acc,
             'epoch': epoch,
+            'timestamp': time_stamp,
+            **vars(args)
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.pth')
+        torch.save(state, './checkpoint/ckpt_'+time_stamp+'.pth')
         best_acc = acc
 
 
 for epoch in range(start_epoch, start_epoch+200):
     train(epoch)
     test(epoch)
+
+writer.add_hparams(vars(args), {'hparam/accuracy': best_acc})
