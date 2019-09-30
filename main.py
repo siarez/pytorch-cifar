@@ -117,10 +117,12 @@ def train(epoch):
         correct += predicted.eq(targets).sum().item()
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 10 == 0:
-            for n, p in net.features.named_parameters():
-                # logging histogram of parameters in the "shape pathway"
-                if 'shape' in n or 'conv2' in n:
-                    writer.add_histogram(n+'_grad', p.grad, epoch)
+            for name, _ in net.named_modules():
+                if name == 'features':
+                    for n, p in net.features.named_parameters():
+                        # logging histogram of parameters in the "shape pathway"
+                        if 'shape' in n or 'conv2' in n:
+                            print(n + '_grad', p.grad, epoch)
 
     writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
