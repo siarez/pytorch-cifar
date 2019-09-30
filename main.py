@@ -77,10 +77,11 @@ if args.resume:
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
-time_stamp = time.strftime("%Y-%m-%d-%H-%M-%S")
-log_dir = join('./logs', time_stamp)
+timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+print('Timestamp: ', timestamp)
+log_dir = join('./logs', timestamp)
 os.makedirs(log_dir)
-writer = SummaryWriter(logdir=log_dir, comment=str(args)+'_'+time_stamp, flush_secs=5)
+writer = SummaryWriter(logdir=log_dir, comment=str(args) +'_' + timestamp, flush_secs=5)
 writer.add_text('args', str(args))
 # writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))  # doesn't work reliably
 criterion = nn.CrossEntropyLoss()
@@ -119,20 +120,20 @@ def train(epoch):
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 10 == 0:
             for name, module in net.named_modules():
-                if name == 'features':
+                if 'features' in name:
                     for n, p in module.named_parameters():
                         # logging histogram of parameters in the "shape pathway"
                         if 'shape' in n or 'conv2' in n:
-                            print(n + '_grad', p.grad, epoch)
+                            writer.add_histogram(n + '_grad', p.grad, epoch*args.batch + batch_idx)
 
     writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
     for name, module in net.named_modules():
-        if name == 'features':
+        if 'features' in name:
             for n, p in module.named_parameters():
                 # logging histogram of parameters in the "shape pathway"
                 if 'shape' in n or 'conv2' in n:
-                    print(n , p, epoch)
+                    writer.add_histogram(n , p, epoch)
 
 
 def test(epoch):
@@ -165,12 +166,12 @@ def test(epoch):
             'net': net.state_dict(),
             'acc': acc,
             'epoch': epoch,
-            'timestamp': time_stamp,
+            'timestamp': timestamp,
             **vars(args)
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt_'+time_stamp+'.pth')
+        torch.save(state, './checkpoint/ckpt_' + timestamp + '.pth')
         best_acc = acc
 
 
