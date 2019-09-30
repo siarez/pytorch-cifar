@@ -119,21 +119,17 @@ def train(epoch):
         correct += predicted.eq(targets).sum().item()
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 10 == 0:
-            for name, module in net.named_modules():
-                if 'features' in name:
-                    for n, p in module.named_parameters():
-                        # logging histogram of parameters in the "shape pathway"
-                        if 'shape' in n or 'conv2' in n:
-                            writer.add_histogram(n + '_grad', p.grad, epoch*args.batch + batch_idx)
+            for n, p in net.module.features.named_parameters():
+                # logging histogram of parameters in the "shape pathway"
+                if 'shape' in n or 'conv2' in n:
+                    writer.add_histogram(n + '_grad', p.grad, epoch*len(trainloader) + batch_idx)
 
     writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
-    for name, module in net.named_modules():
-        if 'features' in name:
-            for n, p in module.named_parameters():
-                # logging histogram of parameters in the "shape pathway"
-                if 'shape' in n or 'conv2' in n:
-                    writer.add_histogram(n , p, epoch)
+    for n, p in net.module.features.named_parameters():
+        # logging histogram of parameters in the "shape pathway"
+        if 'shape' in n or 'conv2' in n:
+            writer.add_histogram(n, p, epoch)
 
 
 def test(epoch):
@@ -175,7 +171,7 @@ def test(epoch):
         best_acc = acc
 
 
-for epoch in range(start_epoch, start_epoch+200):
+for epoch in tqdm(range(start_epoch, start_epoch+200)):
     train(epoch)
     test(epoch)
 
