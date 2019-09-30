@@ -27,6 +27,7 @@ parser.add_argument('--plain', action='store_true', default=False, help='use pla
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print('==> Device: ', device)
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
@@ -117,19 +118,21 @@ def train(epoch):
         correct += predicted.eq(targets).sum().item()
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 10 == 0:
-            for name, _ in net.named_modules():
+            for name, module in net.named_modules():
                 if name == 'features':
-                    for n, p in net.features.named_parameters():
+                    for n, p in module.named_parameters():
                         # logging histogram of parameters in the "shape pathway"
                         if 'shape' in n or 'conv2' in n:
                             print(n + '_grad', p.grad, epoch)
 
     writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
-    for n, p in net.features.named_parameters():
-        # logging histogram of parameters in the "shape pathway"
-        if 'shape' in n or 'conv2' in n:
-            writer.add_histogram(n, p, epoch)
+    for name, module in net.named_modules():
+        if name == 'features':
+            for n, p in module.named_parameters():
+                # logging histogram of parameters in the "shape pathway"
+                if 'shape' in n or 'conv2' in n:
+                    print(n , p, epoch)
 
 
 def test(epoch):
