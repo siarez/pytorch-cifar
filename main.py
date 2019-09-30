@@ -81,7 +81,7 @@ log_dir = join('./logs', time_stamp)
 os.makedirs(log_dir)
 writer = SummaryWriter(logdir=log_dir, comment=str(args)+'_'+time_stamp, flush_secs=5)
 writer.add_text('args', str(args))
-writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))
+# writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))  # doesn't work reliably
 criterion = nn.CrossEntropyLoss()
 if args.optim == 'sgd':
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=args.decay)
