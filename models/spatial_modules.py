@@ -20,6 +20,7 @@ class SpatialConv2d(torch.nn.Module):
         # over parameterizing.
         self.shapes_kernel_weight = Parameter(torch.rand((1, 1, kernel_size * kernel_size * 5, 1)) / torch.tensor(kernel_size * kernel_size * 5.).sqrt())
         self.win_center_idx = kernel_size * kernel_size // 2
+        self.query_scale_factor = Parameter(torch.tensor(self.out_channels, requires_grad=False).type(torch.FloatTensor).sqrt())
         
     def forward(self, x):
         conv_out = self.conv(x[:, :-5, ...])
@@ -49,7 +50,7 @@ class SpatialConv2d(torch.nn.Module):
         shape_query = self.conv2(shape_attended_features)
         # This is a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
         # be experimented with. I think it has to do with random walks.
-        shape_query = shape_query / torch.tensor(self.out_channels).type(torch.FloatTensor).sqrt()
+        shape_query = shape_query / self.query_scale_factor
         shape_query_unfolded = functional.softmax(unfold(shape_query, (self.k, self.k), padding=1), dim=1).unsqueeze(1)
         # This line computes the weighted average of means for each window
         window_means = torch.sum(unfold(self.pad2d(x[:, -5:-3, ...]), (self.k, self.k)).
@@ -101,11 +102,10 @@ class SpatialMaxpool2d(torch.nn.Module):
                                                 output_size=(h, w))
         # The division a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
         # be experimented with. I think it has to do with random walks.
-        shape_weights = max_pool_mask.sum(dim=1, keepdim=True) / torch.tensor(in_channels - 5).type(
+        shape_weights = max_pool_mask.sum(dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(
             torch.FloatTensor).sqrt()
         window_shape_query = functional.softmax(unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride),
                                                 dim=1).unsqueeze(1)
-        # unfold(x[:, -5:, ...], (kernel_size, kernel_size), padding=0).view(-1, 5, 4, num_of_win)
         # Computing window means
         window_means = torch.sum(unfold(x[:, -5:-3, ...], (self.k, self.k), stride=self.stride).view(-1, 2, self.k*self.k, num_of_win)
                                  * window_shape_query, dim=2)
