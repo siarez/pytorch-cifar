@@ -14,11 +14,11 @@ class SpatialConv2d(torch.nn.Module):
         self.conv2 = Conv2d(out_channels, 1, kernel_size=1)
         self.pad2d = torch.nn.ReplicationPad2d(padding)  # Replication padding makes the most sense to me
         # todo: normalize. This can be tricky.
-        self.shapes_kernel = Parameter(torch.rand((out_channels, 1, kernel_size * kernel_size * 5, 1)))
+        self.shapes_kernel = Parameter(torch.rand((1, out_channels, kernel_size * kernel_size * 5, 1)))
         # `shapes_kernel_weight` is basically part of the shape distance function. Sharing it across channels makes sense, if
         # we want all channels use the same distance function. I think this is a good way of doing it, otherwise I think we are
         # over parameterizing.
-        self.shapes_kernel_weight = Parameter(torch.rand((1, 1, kernel_size * kernel_size * 5, 1)) / torch.tensor(kernel_size * kernel_size * 5.).sqrt())
+        # self.shapes_kernel_weight = Parameter(torch.rand((1, 1, kernel_size * kernel_size * 5, 1)) / torch.tensor(kernel_size * kernel_size * 5.).sqrt())
         self.win_center_idx = kernel_size * kernel_size // 2
         self.query_scale_factor = Parameter(torch.tensor(self.out_channels, requires_grad=False).type(torch.FloatTensor).sqrt())
         
@@ -32,9 +32,10 @@ class SpatialConv2d(torch.nn.Module):
         shape_windows[:, -5:-3, :, :] = shape_windows[:, -5:-3, :, :] - shape_windows[:, -5:-3,
                                                                         self.win_center_idx:self.win_center_idx + 1, :]
         shape_difference = torch.abs(shape_windows.view(-1, 5 * self.k * self.k, num_of_win).unsqueeze(
-            0) - self.shapes_kernel)  # experiment: l1 norm, could be other norms
+            1) - self.shapes_kernel)  # experiment: l1 norm, could be other norms
         # could use `torch.dist` or `torch.nn.functional.pairwise_distance` if I didn't have `shapes_kernel_weight`
-        shape_distance_weighted = torch.sum(shape_difference * self.shapes_kernel_weight, dim=2).permute(1, 0, 2)
+        # shape_distance_weighted = torch.sum(shape_difference * self.shapes_kernel_weight, dim=2).permute(1, 0, 2)
+        shape_distance_weighted = torch.sum(shape_difference, dim=2)
         shape_distance_weighted = fold(shape_distance_weighted, (x.shape[2]-self.k+1+2*self.pad, x.shape[3]-self.k+1+2*self.pad), (1, 1))
         shape_attended_features = functional.relu(conv_out / (shape_distance_weighted + 1))  # +1 is to avoid division by zero.    
         # Experiment: We could also use an exponential to modulate the conv with `shape_distance_weighted`. This 
@@ -103,9 +104,10 @@ class SpatialMaxpool2d(torch.nn.Module):
         # The division a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
         # be experimented with. I think it has to do with random walks.
         shape_weights = max_pool_mask.sum(dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(
-            torch.FloatTensor).sqrt()
-        window_shape_query = functional.softmax(unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride),
-                                                dim=1).unsqueeze(1)
+            torch.FloatTensor)  # .sqrt()
+        # window_shape_query = functional.softmax(unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride),
+        #                                         dim=1).unsqueeze(1)
+        window_shape_query = unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride).unsqueeze(1)
         # Computing window means
         window_means = torch.sum(unfold(x[:, -5:-3, ...], (self.k, self.k), stride=self.stride).view(-1, 2, self.k*self.k, num_of_win)
                                  * window_shape_query, dim=2)
