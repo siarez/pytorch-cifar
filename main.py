@@ -25,7 +25,7 @@ parser.add_argument('--resume', '-r', default='', type=str, help='resume from ch
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
 parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
 parser.add_argument('--graph', action='store_true', default=False, help='Logs the model graph for Tensorboard')
-parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19'], default='VGG_tiny', help='pick a VGG')
+parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -61,7 +61,10 @@ print('==> Building model..')
 if args.plain:
     net = VGG(args.model)
 else:
-    net = SpatialVGG(args.model, normal=args.normal)
+    if args.model == 'sp1':
+        net = SpatialModel1(normal=args.normal)
+    else:
+        net = SpatialVGG(args.model, normal=args.normal)
 
 print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
 
@@ -123,7 +126,7 @@ def train(epoch):
         optimizer.zero_grad()
         inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
         outputs = net(inputs)
-        loss = criterion(outputs, targets) + shapes_kernel_loss(net)
+        loss = criterion(outputs, targets)  # + shapes_kernel_loss(net)
         loss.backward()
         optimizer.step()
         train_loss += loss.item()
@@ -131,18 +134,18 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-        if batch_idx % 10 == 0:
-            for n, p in net.module.features.named_parameters():
-                # logging histogram of parameters in the "shape pathway"
-                if 'shape' in n or 'conv2' in n:
-                    writer.add_histogram(n + '_grad', p.grad, epoch*len(trainloader) + batch_idx)
+        # if batch_idx % 10 == 0:
+        #     for n, p in net.module.features.named_parameters():
+        #         # logging histogram of parameters in the "shape pathway"
+        #         if ('shape' in n or 'conv2' in n) and p.grad is not None:
+        #             writer.add_histogram(n + '_grad', p.grad, epoch*len(trainloader) + batch_idx)
 
     writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
-    for n, p in net.module.features.named_parameters():
-        # logging histogram of parameters in the "shape pathway"
-        if 'shape' in n or 'conv2' in n:
-            writer.add_histogram(n, p, epoch)
+    # for n, p in net.module.features.named_parameters():
+    #     # logging histogram of parameters in the "shape pathway"
+    #     if 'shape' in n or 'conv2' in n:
+    #         writer.add_histogram(n, p, epoch)
 
 
 def test(epoch):
