@@ -20,7 +20,7 @@ class SpatialConv2d(torch.nn.Module):
         # over parameterizing.
         # self.shapes_kernel_weight = Parameter(torch.rand((1, 1, kernel_size * kernel_size * 5, 1)) / torch.tensor(kernel_size * kernel_size * 5.).sqrt())
         self.win_center_idx = kernel_size * kernel_size // 2
-        self.query_scale_factor = Parameter(torch.tensor(self.out_channels, requires_grad=False).type(torch.FloatTensor).sqrt())
+        self.query_scale_factor = Parameter(torch.tensor(self.out_channels).type(torch.FloatTensor).sqrt(), requires_grad=False)
         
     def forward(self, x):
         conv_out = self.conv(x[:, :-5, ...])
@@ -32,13 +32,16 @@ class SpatialConv2d(torch.nn.Module):
         shape_windows[:, -5:-3, :, :] = shape_windows[:, -5:-3, :, :] - shape_windows[:, -5:-3,
                                                                         self.win_center_idx:self.win_center_idx + 1, :]
         shape_difference = torch.abs(shape_windows.view(-1, 5 * self.k * self.k, num_of_win).unsqueeze(
-            1) - self.shapes_kernel)  # experiment: l1 norm, could be other norms
+            1) - self.shapes_kernel)**2  # experiment: l1 norm, could be other norms
         # could use `torch.dist` or `torch.nn.functional.pairwise_distance` if I didn't have `shapes_kernel_weight`
         # shape_distance_weighted = torch.sum(shape_difference * self.shapes_kernel_weight, dim=2).permute(1, 0, 2)
-        shape_distance_weighted = torch.sum(shape_difference, dim=2)
+        # shape_distance_weighted = torch.mean(shape_difference, dim=2)
+        shape_distance_weighted = torch.softmax(torch.sum(shape_difference, dim=2), dim=1)
         shape_distance_weighted = fold(shape_distance_weighted, (x.shape[2]-self.k+1+2*self.pad, x.shape[3]-self.k+1+2*self.pad), (1, 1))
-        shape_attended_features = functional.relu(conv_out / (shape_distance_weighted + 1))  # +1 is to avoid division by zero.    
-        # Experiment: We could also use an exponential to modulate the conv with `shape_distance_weighted`. This 
+        # shape_attended_features = functional.relu(conv_out / (shape_distance_weighted + 1))  # +1 is to avoid division by zero.
+        shape_attended_features = functional.relu(conv_out * shape_distance_weighted)  # +1 is to avoid division by zero.
+        # shape_attended_features = functional.relu(conv_out - shape_distance_weighted )  # +1 is to avoid division by zero.
+        # Experiment: We could also use an exponential to modulate the conv with `shape_distance_weighted`. This
         # punishes shape mismatch more aggressively. It could be a good idea if the shapes end up having very low 
         # variance(looking all similar).
         # out = functional.relu(conv_out) * torch.exp(-shape_distance_weighted)
@@ -61,18 +64,25 @@ class SpatialConv2d(torch.nn.Module):
         # from the mean of the window.
         window_var_part_1 = torch.sum(
             unfold(self.pad2d(x[:, -3:-1, ...]), (self.k, self.k)).view(-1, 2, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
-        window_var_part_2 = (((unfold(self.pad2d(x[:, -5:-3, ...]), (self.k, self.k)).view(-1, 2, self.k*self.k,num_of_win) - window_means.unsqueeze(2)) ** 2)
-                             * shape_query_unfolded).sum(dim=2)
+        # window_var_part_2 = (((unfold(self.pad2d(x[:, -5:-3, ...]), (self.k, self.k)).view(-1, 2, self.k*self.k,num_of_win) - window_means.unsqueeze(2)) ** 2)
+        #                      * shape_query_unfolded).sum(dim=2)  # This is most likely not correct, because of weight calculation and number also look wrong
+        window_var_part_2 = (((unfold(self.pad2d(x[:, -5:-3, ...]), (self.k, self.k)).view(-1, 2, self.k * self.k,
+                                                                       num_of_win) - window_means.unsqueeze(2)) * shape_query_unfolded) ** 2).sum(dim=2)
+
         window_var = window_var_part_1 + window_var_part_2
         # Part_1 is contribution of covariances of ellipses. Part_2 is the contribution of how far the mean of each ellipse is
         # from the mean of the window.
         window_covar_part_1 = torch.sum(
             unfold(self.pad2d(x[:, -1:, ...]), (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) * shape_query_unfolded,
             dim=2)
+        # window_covar_part_2 = \
+        #     (((unfold(self.pad2d(x[:, -5:-4, ...]), (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) - window_means[:,0:1,:].unsqueeze(2)) *
+        #     (unfold(self.pad2d(x[:, -4:-3, ...]), (self.k, self.k)).view(-1, 1, self.k*self.k,num_of_win) - window_means[:,1:2,:].unsqueeze(2))) *
+        #    shape_query_unfolded).sum(dim=2)  # Following the change in variance calculation, I replaced this as well
         window_covar_part_2 = \
             (((unfold(self.pad2d(x[:, -5:-4, ...]), (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) - window_means[:,0:1,:].unsqueeze(2)) *
             (unfold(self.pad2d(x[:, -4:-3, ...]), (self.k, self.k)).view(-1, 1, self.k*self.k,num_of_win) - window_means[:,1:2,:].unsqueeze(2))) *
-           shape_query_unfolded).sum(dim=2)
+             (shape_query_unfolded**2)).sum(dim=2)
         window_covar = window_covar_part_1 + window_covar_part_2
         window_aggregated_shapes = torch.cat([window_means, window_var, window_covar], dim=1)
         window_aggregated_shapes = fold(window_aggregated_shapes, (x.shape[2]-self.k+1+2*self.pad, x.shape[3]-self.k+1+2*self.pad), (1, 1))
@@ -99,15 +109,16 @@ class SpatialMaxpool2d(torch.nn.Module):
         pooled_features, idx = self.max_pool(x[:, :-5, ...])
         num_of_win = pooled_features.shape[2] * pooled_features.shape[3]
         # ********** Shape aggregation **********
-        max_pool_mask = functional.max_unpool2d(torch.ones_like(pooled_features), idx, self.k, stride=self.stride,
-                                                output_size=(h, w))
+        max_unpooled = self.max_unpool(pooled_features, idx, output_size=(h, w))
         # The division a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
         # be experimented with. I think it has to do with random walks.
-        shape_weights = max_pool_mask.sum(dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(
-            torch.FloatTensor)  # .sqrt()
-        # window_shape_query = functional.softmax(unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride),
-        #                                         dim=1).unsqueeze(1)
-        window_shape_query = unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride).unsqueeze(1)
+        shape_weights = torch.norm(max_unpooled, dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(
+            torch.FloatTensor).sqrt()
+        # shape_weights = max_unpooled.sum(dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(
+        #     torch.FloatTensor)  # .sqrt()
+        window_shape_query = functional.softmax(unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride),
+                                                dim=1).unsqueeze(1)
+        # window_shape_query = unfold(shape_weights, (self.k, self.k), padding=0, stride=self.stride).unsqueeze(1)
         # Computing window means
         window_means = torch.sum(unfold(x[:, -5:-3, ...], (self.k, self.k), stride=self.stride).view(-1, 2, self.k*self.k, num_of_win)
                                  * window_shape_query, dim=2)
