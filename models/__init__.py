@@ -1,5 +1,6 @@
 from .vgg import *
 from .spatial_vgg import SpatialVGG
+from .spatial_models import SpatialModel1
 from .dpn import *
 from .lenet import *
 from .senet import *
