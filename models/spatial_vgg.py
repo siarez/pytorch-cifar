@@ -8,6 +8,7 @@ from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d
 
 
 cfg = {
+    'VGG_tiny': [32, 'M', 64, 'M', 128, 128, 'M'],
     'VGG_mini': [32, 'M', 64, 'M', 128, 128, 'M', 256, 256, 'M', 256, 256, 'M'],
     'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -37,6 +38,8 @@ class SpatialVGG(nn.Module):
         self.features = self._make_layers(cfg[vgg_name])
         if vgg_name == 'VGG_mini':
             self.classifier = nn.Linear(256 + 5, 10)
+        elif vgg_name == 'VGG_tiny':
+            self.classifier = nn.Linear(2128, 10)
         else:
             self.classifier = nn.Linear(512 + 5, 10)
 
