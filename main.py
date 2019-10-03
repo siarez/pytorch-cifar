@@ -7,7 +7,7 @@ import torch.backends.cudnn as cudnn
 import torchvision
 import torchvision.transforms as transforms
 import os
-from os.path import join
+from os.path import join, isdir
 import time
 import argparse
 from models import *
@@ -24,13 +24,16 @@ parser.add_argument('--sparsity', default=0.0, type=float, help='convolution bac
 parser.add_argument('--resume', '-r', default='', type=str, help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
 parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
+parser.add_argument('--graph', action='store_true', default=False, help='Logs the model graph for Tensorboard')
+parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19'], default='VGG_tiny', help='pick a VGG')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('==> Device: ', device)
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-
+timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+print('Timestamp: ', timestamp)
 # Data
 print('==> Preparing data..')
 transform_train = transforms.Compose([
@@ -56,9 +59,9 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 # Model
 print('==> Building model..')
 if args.plain:
-    net = VGG('VGG11')
+    net = VGG(args.model)
 else:
-    net = SpatialVGG('VGG11', normal=args.normal)
+    net = SpatialVGG(args.model, normal=args.normal)
 
 print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
 
@@ -76,14 +79,16 @@ if args.resume:
     net.load_state_dict(checkpoint['net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
+    timestamp = args.resume[5:-4]
 
-timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
-print('Timestamp: ', timestamp)
 log_dir = join('./logs', timestamp)
-os.makedirs(log_dir)
-writer = SummaryWriter(logdir=log_dir, comment=str(args) +'_' + timestamp, flush_secs=5)
+if not isdir(log_dir):
+    os.makedirs(log_dir)
+writer = SummaryWriter(logdir=log_dir, comment=str(args) +'_'+ timestamp, flush_secs=5)
 writer.add_text('args', str(args))
-# writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))  # doesn't work reliably
+if args.graph:
+    writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))  # doesn't work reliably
+
 criterion = nn.CrossEntropyLoss()
 if args.optim == 'sgd':
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.mom, weight_decay=args.decay)
@@ -96,6 +101,14 @@ shape_map_center = torch.stack(torch.meshgrid(torch.arange(0.5, h, step=1), torc
 shape_map_var = torch.ones((args.batch, 2, h, w)) / 4  # 4 is a hyper parameter determining the diameter of pixels.
 shape_map_cov = torch.zeros((args.batch, 1, h, w))
 shape_map = torch.cat([shape_map_center, shape_map_var, shape_map_cov], dim=1).to(device)
+
+def shapes_kernel_loss(model):
+    """Added a term that prevents shape kernels to be zero."""
+    loss = 0.
+    for n, p in model.module.features.named_parameters():
+        if 'shapes_kernel' in n:
+            loss += 0.0 / (p.mean() * p.std())
+    return loss
 
 # Training
 def train(epoch):
@@ -110,7 +123,7 @@ def train(epoch):
         optimizer.zero_grad()
         inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
         outputs = net(inputs)
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs, targets) + shapes_kernel_loss(net)
         loss.backward()
         optimizer.step()
         train_loss += loss.item()
