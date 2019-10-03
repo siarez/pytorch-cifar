@@ -5,7 +5,7 @@ from torch.nn import Conv2d as Conv2dNormal
 from torch.nn import MaxPool2d as MaxPool2dNormal
 from torch.nn import BatchNorm2d as BatchNorm2dNormal
 from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d
-
+import numpy as np
 
 cfg = {
     'VGG_tiny': [32, 'M', 64, 'M', 128, 128, 'M'],
@@ -19,6 +19,15 @@ cfg = {
 Conv2d = None
 MaxPool2d = None
 BatchNorm2d = None
+
+def img_show(img, idx=0):
+    from matplotlib import pyplot as plt
+    img = img[idx, 0:3].clone().detach().cpu()
+    mean = torch.Tensor([0.4914, 0.4822, 0.4465]).unsqueeze(-1).unsqueeze(-1)
+    std = torch.Tensor([0.2023, 0.1994, 0.2010]).unsqueeze(-1).unsqueeze(-1)
+    img = img * std + mean
+    plt.imshow(np.rot90(img.permute(2, 1, 0).numpy(), k=-1) )
+    plt.show()
 
 class SpatialVGG(nn.Module):
     def __init__(self, vgg_name, normal=False, sparsity=0.0):
@@ -42,8 +51,14 @@ class SpatialVGG(nn.Module):
             self.classifier = nn.Linear(2128, 10)
         else:
             self.classifier = nn.Linear(512 + 5, 10)
+        self.counter = 0
+
 
     def forward(self, x):
+        self.counter += 1
+        if self.counter > 1000:
+            img_show(x)
+            self.counter = 0
         out = self.features(x)
         out = out.view(out.size(0), -1)
         out = self.classifier(out)
@@ -56,8 +71,7 @@ class SpatialVGG(nn.Module):
             if x == 'M':
                 layers += [MaxPool2d(kernel_size=2, stride=2)]
             else:
-                layers += [Conv2d(in_channels, x, kernel_size=3, padding=1),
-                           BatchNorm2d(x)]
+                layers += [Conv2d(in_channels, x, kernel_size=3, padding=1)]
                 in_channels = x
         layers += [nn.BatchNorm2d(in_channels+5), nn.AvgPool2d(kernel_size=1, stride=1)]  # This last batch norm should be normal
         return nn.Sequential(*layers)
