@@ -109,10 +109,7 @@ def plot_shapes(window_aggregated_shapes, ax, idx=0, size=32):
         # z += multivariate_normal(center, cov_mat).pdf(pos) * (cov_mat[0, 0]+cov_mat[1, 1]) / 2 / centers.shape[0]
         confidence_ellipse(center, cov_mat, ax, edgecolor=(intensity, 0.0, 1 - intensity))
         # z += multivariate_normal(center, cov_mat).pdf(pos) / centers.shape[0]
-    # grid_interval = size / window_aggregated_shapes.shape[-1]
-    # grid_locations = np.arange(grid_interval, size, grid_interval)
-    # ax.set_yticks(grid_locations, minor=False)
-    # ax.set_xticks(grid_locations, minor=False)
+        pass
     minor_grid_interval = size / window_aggregated_shapes.shape[-1]
     major_grid_interval = size * 2 / window_aggregated_shapes.shape[-1]
     minor_grid_locations = np.arange(minor_grid_interval, size, minor_grid_interval)
@@ -127,8 +124,6 @@ def plot_shapes(window_aggregated_shapes, ax, idx=0, size=32):
     ax.xaxis.grid(True, which='major', linestyle='-')
     # ax.contourf(y, x, z)
     ax.scatter(centers[:, 1], centers[:, 0], c='red', s=2)
-    # ax.yaxis.grid(True, which='major', linestyle=':')
-    # ax.xaxis.grid(True, which='major', linestyle=':')
 
 
 class SpatialModel1(nn.Module):
@@ -152,21 +147,22 @@ class SpatialModel1(nn.Module):
         self.conv2 = Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv3 = Conv2d(64, 128, kernel_size=3, padding=1)
         self.conv4 = Conv2d(128, 128, kernel_size=3, padding=1)
-        self.mp1 = MaxPool2d(kernel_size=2, stride=2)
-        self.mp2 = MaxPool2d(kernel_size=2, stride=2)
-        self.mp3 = MaxPool2d(kernel_size=2, stride=2)
-        self.classifier = nn.Linear(2128, 10)
+        self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=2)
+        self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=2)
+        self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=2)
+        # self.classifier = nn.Linear(2128, 10)
+        self.classifier = nn.Linear(4788, 10)
         self.batch_count = 0
-        self.test_img_interval = 200
+        self.test_img_interval = 50
 
 
     def forward(self, x):
 
-        if self.batch_count > self.test_img_interval:
-            # Creating a dummy input to inspect shape pooling
-            x[:, :-5, :, :] = torch.zeros_like(x[:, :-5, :, :]) - 1 + torch.randn_like(x[:, :-5, :, :])/20
-            ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
-            x[:, :-5, 12:28, 12:16] = ones
+        # if self.batch_count > self.test_img_interval:
+        #     # Creating a dummy input to inspect shape pooling
+        #     x[:, :-5, :, :] = torch.zeros_like(x[:, :-5, :, :]) - 1 + torch.randn_like(x[:, :-5, :, :])/20
+        #     ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
+        #     x[:, :-5, 12:28, 12:16] = ones
         c1 = self.conv1(x)
         mp1 = self.mp1(c1)
         c2 = self.conv2(mp1)
@@ -189,7 +185,7 @@ class SpatialModel1(nn.Module):
             plot_shapes(mp3, ax4)
             plt.show()
             self.batch_count = 0
-            self.test_img_interval = 100
+            self.test_img_interval = 10
         self.batch_count += 1
         return out
 
