@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch import autograd
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torchvision
@@ -101,16 +102,16 @@ elif args.optim == 'adam':
 h, w = 32, 32
 shape_map_center = torch.stack(torch.meshgrid(torch.arange(0.5, h, step=1), torch.arange(0.5, w, step=1))).unsqueeze(
     0).repeat(args.batch, 1, 1, 1)
-shape_map_var = torch.ones((args.batch, 2, h, w)) / 4  # 4 is a hyper parameter determining the diameter of pixels.
+shape_map_var = torch.ones((args.batch, 2, h, w)) / 2  # 4 is a hyper parameter determining the diameter of pixels.
 shape_map_cov = torch.zeros((args.batch, 1, h, w))
 shape_map = torch.cat([shape_map_center, shape_map_var, shape_map_cov], dim=1).to(device)
 
 def shapes_kernel_loss(model):
     """Added a term that prevents shape kernels to be zero."""
     loss = 0.
-    for n, p in model.module.features.named_parameters():
+    for n, p in model.module.named_parameters():
         if 'shapes_kernel' in n:
-            loss += 0.0 / (p.mean() * p.std())
+            loss += 1.0 / (p.mean() * p.std())
     return loss
 
 # Training
@@ -124,10 +125,16 @@ def train(epoch):
     for batch_idx, (inputs, targets) in pbar:
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
-        outputs = net(inputs)
-        loss = criterion(outputs, targets)  # + shapes_kernel_loss(net)
-        loss.backward()
+        with autograd.detect_anomaly():
+            inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
+            outputs = net(inputs)
+            loss = criterion(outputs, targets)  # + shapes_kernel_loss(net)
+            try:
+                loss.backward()
+            except (Exception, ArithmeticError) as e:
+                # print(e)
+                pass
+
         optimizer.step()
         train_loss += loss.item()
         _, predicted = outputs.max(1)
