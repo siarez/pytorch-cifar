@@ -18,6 +18,7 @@ class SpatialConv2d(torch.nn.Module):
         # moved batchnorm here so I can do it before the Relu, like the original architecture
         self.bn2d = BatchNorm2d(out_channels, affine=False)
         self.bn2d2 = BatchNorm2d(out_channels, affine=False)
+        self.bn2d3 = BatchNorm2d(out_channels, affine=False)
         # Initializing shape kernels
         kernel_init_coef = 1.0  # / torch.sqrt(torch.tensor(kernel_size * kernel_size * 5.0))
         self.shapes_kernel = torch.zeros((1, out_channels, 5, kernel_size * kernel_size, 1))
@@ -56,15 +57,18 @@ class SpatialConv2d(torch.nn.Module):
             # This would make subtraction of the local window centers no work properly when writing back to `shape_windows`
             shape_windows = unfold(x_padded[:, -5:, ...], self.k).view(-1, 5, self.k * self.k, num_of_win).clone()
             shape_windows[:, -5:-3, :, :] = shape_windows[:, -5:-3, :, :] - shape_windows[:, -5:-3, self.win_center_idx:self.win_center_idx + 1, :]
-            shapes_delta = (shape_windows.unsqueeze(1) - self.shapes_kernel).view(-1, self.out_channels, 5*self.k**2, num_of_win)
+            # shapes_delta = (shape_windows.unsqueeze(1) - self.shapes_kernel).view(-1, self.out_channels, 5*self.k**2, num_of_win)
+            shapes_delta = (torch.exp(shape_windows.unsqueeze(1)) * torch.exp(-self.shapes_kernel)).view(-1, self.out_channels, 5*self.k**2, num_of_win)
+
             shape_difference = torch.norm(shapes_delta, p=1, dim=2) # / self.query_scale_factor  # experiment: l1 norm, could be other norms
             # shape_difference_soft = torch.softmax(-shape_difference)  # bigger difference results in smaller multiplier
             # shape_difference_soft = shape_difference_soft*self.shapes_channel_weight # learnable scale factor
             shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
-            shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
+            # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
+            shape_distance_weighted = self.bn2d3(-shape_distance_weighted * self.concordance_coef2)
             shape_distance_weighted = functional.relu(self.conv3(shape_distance_weighted))
             # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
-            shape_attended_features = functional.relu(self.bn2d(conv_out) + self.bn2d(shape_distance_weighted))
+            shape_attended_features = functional.relu(self.bn2d(conv_out) + self.bn2d2(shape_distance_weighted))
 
             # shape_attended_features = functional.relu(self.bn2d(conv_out - shape_distance_weighted * self.concordance_coef))
             # Experiment: We could also use an exponential to modulate the conv with `shape_distance_weighted`. This
