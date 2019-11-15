@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn import Conv2d as Conv2dNormal
 from torch.nn import MaxPool2d as MaxPool2dNormal
 from torch.nn import BatchNorm2d as BatchNorm2dNormal
-from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d
+from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d, SpatialMaxpool2d_2, SpatialMaxpool2d_3
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.stats import multivariate_normal
@@ -147,22 +147,35 @@ class SpatialModel1(nn.Module):
         self.conv2 = Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv3 = Conv2d(64, 128, kernel_size=3, padding=1)
         self.conv4 = Conv2d(128, 128, kernel_size=3, padding=1)
-        self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=2)
-        self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=2)
-        self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=2)
+
+        self.mp1 = MaxPool2d(kernel_size=2, stride=2, padding=(0, 1, 0, 1))
+        self.mp2 = MaxPool2d(kernel_size=2, stride=2, padding=(0, 1, 0, 1))
+        self.mp3 = MaxPool2d(kernel_size=2, stride=2, padding=(0, 1, 0, 1))
+        # self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
+        # self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
+        # self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
+        # self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=(0, 2, 0, 2))
+        # self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=(0, 2, 0, 2))
+        # self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=(0, 2, 0, 2))
+        # self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=1)
         # self.classifier = nn.Linear(2128, 10)
-        self.classifier = nn.Linear(4788, 10)
+        # self.classifier = nn.Linear(3325, 10)
+        # self.classifier = nn.Linear(3200, 10)
+        self.classifier = nn.Linear(2048, 10)
+        # self.classifier = nn.Linear(1152, 10)
         self.batch_count = 0
-        self.test_img_interval = 50
+        self.test_img_interval = 400
 
 
     def forward(self, x):
 
-        # if self.batch_count > self.test_img_interval:
-        #     # Creating a dummy input to inspect shape pooling
-        #     x[:, :-5, :, :] = torch.zeros_like(x[:, :-5, :, :]) - 1 + torch.randn_like(x[:, :-5, :, :])/20
-        #     ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
-        #     x[:, :-5, 12:28, 12:16] = ones
+        if self.batch_count > self.test_img_interval:
+            # Creating a dummy input to inspect shape pooling
+            x[:, :-5, :, :] = torch.zeros_like(x[:, :-5, :, :]) - 1 + torch.randn_like(x[:, :-5, :, :])/20
+            ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
+            x[:, :-5, 12:28, 12:16] = ones
         c1 = self.conv1(x)
         mp1 = self.mp1(c1)
         c2 = self.conv2(mp1)
@@ -170,22 +183,26 @@ class SpatialModel1(nn.Module):
         c3 = self.conv3(mp2)
         c4 = self.conv4(c3)
         mp3 = self.mp3(c4)
-        mp3_flat = mp3.view(mp3.size(0), -1)
+        mp3_flat = mp3[:, :-5, ...].view(mp3.size(0), -1)
         out = self.classifier(mp3_flat)
         if self.batch_count > self.test_img_interval:
             # Creates two subplots and unpacks the output array immediately
-            f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=False)
+            f, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2, sharey=False)
             ax1.set_aspect(1)
             ax2.set_aspect(1)
             ax3.set_aspect(1)
             ax4.set_aspect(1)
+            ax5.set_aspect(1)
+            ax6.set_aspect(1)
             img_show(x, ax1)
             plot_shapes(mp1, ax2)
             plot_shapes(mp2, ax3)
             plot_shapes(mp3, ax4)
+            plot_shapes(self.mp1(mp1), ax5)
+            plot_shapes(self.mp1(self.mp1(mp1)), ax6)
             plt.show()
             self.batch_count = 0
-            self.test_img_interval = 10
+            self.test_img_interval = 40
         self.batch_count += 1
         return out
 
