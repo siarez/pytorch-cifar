@@ -20,7 +20,7 @@ parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--decay', default=5e-4, type=float, help='weight decay')
 parser.add_argument('--mom', default=0.9, type=float, help='momentum')
 parser.add_argument('--optim', default='adam', choices=['sgd', 'adam'], help='momentum')
-parser.add_argument('--batch', default=128, type=int, help='batch size')
+parser.add_argument('--batch', default=16, type=int, help='batch size')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', default='', type=str, help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
@@ -30,6 +30,7 @@ parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13'
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = 'cpu'
 print('==> Device: ', device)
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
@@ -102,7 +103,7 @@ elif args.optim == 'adam':
 h, w = 32, 32
 shape_map_center = torch.stack(torch.meshgrid(torch.arange(0.5, h, step=1), torch.arange(0.5, w, step=1))).unsqueeze(
     0).repeat(args.batch, 1, 1, 1)
-shape_map_var = torch.ones((args.batch, 2, h, w)) / 2  # 4 is a hyper parameter determining the diameter of pixels.
+shape_map_var = torch.ones((args.batch, 2, h, w)) # / 2  # 4 is a hyper parameter determining the diameter of pixels.
 shape_map_cov = torch.zeros((args.batch, 1, h, w))
 shape_map = torch.cat([shape_map_center, shape_map_var, shape_map_cov], dim=1).to(device)
 
@@ -114,8 +115,26 @@ def shapes_kernel_loss(model):
             loss += 1.0 / (p.mean() * p.std())
     return loss
 
+def shapes_kernel_loss(model):
+    """Added a term that prevents shape kernels to be zero."""
+    loss = 0.
+    for n, p in model.module.named_parameters():
+        if 'shapes_kernel' in n:
+            loss += 1.0 / (p.mean() * p.std())
+    return loss
+
+def shape_distance_loss(model):
+    """Adds a loss term that corresponds to how far the kernels are from pooled shapes"""
+    loss = 0
+    for n, p in model.named_buffers():
+        if 'shape_distance_weighted' in n:
+            loss += (p/(p.mean(dim=1, keepdim=True))).prod(dim=1).sum()
+            # loss += p.mean()
+    return loss
 # Training
+shape_distance_loss_coef = 0.1
 def train(epoch):
+    global shape_distance_loss_coef
     print('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
@@ -123,12 +142,13 @@ def train(epoch):
     total = 0
     pbar = tqdm(enumerate(trainloader), total=len(trainloader))
     for batch_idx, (inputs, targets) in pbar:
+        # shape_distance_loss_coef *= 0.995
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         with autograd.detect_anomaly():
             inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
-            loss = criterion(outputs, targets)  # + shapes_kernel_loss(net)
+            loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
             try:
                 loss.backward()
             except (Exception, ArithmeticError) as e:
@@ -141,17 +161,27 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-        # if batch_idx % 10 == 0:
-        #     for n, p in net.module.features.named_parameters():
-        #         # logging histogram of parameters in the "shape pathway"
-        #         if ('shape' in n or 'conv2' in n) and p.grad is not None:
-        #             writer.add_histogram(n + '_grad', p.grad, epoch*len(trainloader) + batch_idx)
+        if batch_idx % 10 == 0:
+            for n, p in net.named_parameters():
+                # logging histogram of parameters in the "shape pathway"
+                if (('shape' in n) and p.grad is not None):
+                    writer.add_histogram(n + '_grad', p.grad, epoch*len(trainloader) + batch_idx)
+                    if 'shapes_kernel' in n:
+                        writer.add_histogram(n+'_means', p[:, :, 0:2, ...], epoch*len(trainloader) + batch_idx)
+                        writer.add_histogram(n+'_var', p[:, :, 2:4, ...], epoch*len(trainloader) + batch_idx)
+                        writer.add_histogram(n+'_covar', p[:, :, 4, ...], epoch*len(trainloader) + batch_idx)
+            for n, p in net.named_buffers():
+                if 'shape_distance_weighted' in n:
+                    writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
+
+            writer.add_scalar('Batch Train Loss', train_loss / (batch_idx + 1), epoch*len(trainloader) + batch_idx)
+            writer.add_scalar('Batch Train Acc.', 100. * correct / total, epoch*len(trainloader) + batch_idx)
 
     writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
-    # for n, p in net.module.features.named_parameters():
+    # for n, p in net.named_parameters():
     #     # logging histogram of parameters in the "shape pathway"
-    #     if 'shape' in n or 'conv2' in n:
+    #     if 'shape' in n and 'shape_difference' not in n:
     #         writer.add_histogram(n, p, epoch)
 
 

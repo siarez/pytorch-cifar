@@ -7,13 +7,14 @@ class SpatialConv2d(torch.nn.Module):
     """
     For now it only accepts square kernels
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, shape_passthrough=False):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, shape_passthrough=False, cat_distance=False):
         super(SpatialConv2d, self).__init__()
         self.in_channels, self.out_channels, self.k, self.pad = in_channels, out_channels, kernel_size, padding
         self.shape_passthrough = shape_passthrough
-        self.conv = Conv2d(in_channels, out_channels, kernel_size)
+        self.cat_distance = cat_distance
+        self.conv = Conv2d(in_channels + (out_channels if cat_distance else 0), out_channels, kernel_size)
         self.conv2 = Conv2d(out_channels, 1, kernel_size=1)
-        self.conv3 = Conv2d(out_channels, out_channels, kernel_size=1, bias=False)
+        self.conv3 = Conv2d(out_channels, out_channels, kernel_size=1, bias=False, )
         self.pad2d = torch.nn.ReplicationPad2d(padding)  # Replication padding makes the most sense to me
         # moved batchnorm here so I can do it before the Relu, like the original architecture
         self.bn2d = BatchNorm2d(out_channels, affine=False)
@@ -44,80 +45,111 @@ class SpatialConv2d(torch.nn.Module):
         self.sm2d = Softmax2d()
         self.concordance_coef = Parameter(torch.tensor(1.0))
         self.concordance_coef2 = Parameter(torch.tensor(2.0))
+        self.shape_difference_logging = None
+        self.register_buffer('shape_distance_weighted', None)
         # utils.clip_grad_value_(self.parameters(), 0.1)
         
     def forward(self, x):
         if not self.shape_passthrough:
-            x_padded = self.pad2d(x)
-            conv_out = self.conv(x_padded[:, :-5, ...])
-            num_of_win = conv_out.shape[2] * conv_out.shape[3]
-            # Only compute new shapes if `self.shape_passthrough` is False
-            # ********** Compute shape concordance **********
-            # Need to `clone()` because more than one element of the unfolded tensor may refer to a single memory location.
-            # This would make subtraction of the local window centers no work properly when writing back to `shape_windows`
-            shape_windows = unfold(x_padded[:, -5:, ...], self.k).view(-1, 5, self.k * self.k, num_of_win).clone()
-            shape_windows[:, -5:-3, :, :] = shape_windows[:, -5:-3, :, :] - shape_windows[:, -5:-3, self.win_center_idx:self.win_center_idx + 1, :]
-            # shapes_delta = (shape_windows.unsqueeze(1) - self.shapes_kernel).view(-1, self.out_channels, 5*self.k**2, num_of_win)
-            shapes_delta = (torch.exp(shape_windows.unsqueeze(1)) * torch.exp(-self.shapes_kernel)).view(-1, self.out_channels, 5*self.k**2, num_of_win)
+            if not self.cat_distance:
+                x_padded = self.pad2d(x)
+                conv_out = self.conv(x_padded[:, :-5, ...])
+                num_of_win = conv_out.shape[2] * conv_out.shape[3]
+                # Only compute new shapes if `self.shape_passthrough` is False
+                # ********** Compute shape concordance **********
+                # Need to `clone()` because more than one element of the unfolded tensor may refer to a single memory location.
+                # This would make subtraction of the local window centers to work properly when writing back to `shape_windows`
+                shape_windows = unfold(x_padded[:, -5:, ...], self.k).view(-1, 5, self.k * self.k, num_of_win).clone()
+                shape_windows[:, -5:-3, :, :] = shape_windows[:, -5:-3, :, :] - shape_windows[:, -5:-3, self.win_center_idx:self.win_center_idx + 1, :]
+                shapes_delta = (shape_windows.unsqueeze(1) - self.shapes_kernel).view(-1, self.out_channels, 5*(self.k**2), num_of_win)
+                # shapes_delta = (torch.exp((shape_windows.unsqueeze(1) - self.shapes_kernel)**2)).view(-1, self.out_channels, 5*self.k**2, num_of_win)
+                # shape_difference = shapes_delta.sum(dim=2)
+                shape_difference = torch.norm(shapes_delta, p=1, dim=2) # / self.query_scale_factor  # experiment: l1 norm, could be other norms
+                # shape_difference_soft = torch.softmax(-shape_difference)  # bigger difference results in smaller multiplier
+                # shape_difference_soft = shape_difference_soft*self.shapes_channel_weight # learnable scale factor
+                self.shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
+                # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
+                # shape_distance_weighted = self.bn2d3(shape_distance_weighted)
+                shape_distance_weighted = functional.relu(self.bn2d2(self.conv3(self.shape_distance_weighted)))
+                # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
+                shape_attended_features = functional.relu(self.bn2d(conv_out) - shape_distance_weighted)
+                # shape_attended_features = functional.leaky_relu(self.bn2d(conv_out)) * shape_distance_weighted
+                # shape_attended_features = functional.leaky_relu(self.bn2d(conv_out) + functional.leaky_relu(self.bn2d2(self.conv3(conv_out))) * self.shape_distance_weighted)
 
-            shape_difference = torch.norm(shapes_delta, p=1, dim=2) # / self.query_scale_factor  # experiment: l1 norm, could be other norms
-            # shape_difference_soft = torch.softmax(-shape_difference)  # bigger difference results in smaller multiplier
-            # shape_difference_soft = shape_difference_soft*self.shapes_channel_weight # learnable scale factor
-            shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
-            # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
-            shape_distance_weighted = self.bn2d3(-shape_distance_weighted * self.concordance_coef2)
-            shape_distance_weighted = functional.relu(self.conv3(shape_distance_weighted))
-            # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
-            shape_attended_features = functional.relu(self.bn2d(conv_out) + self.bn2d2(shape_distance_weighted))
 
-            # shape_attended_features = functional.relu(self.bn2d(conv_out - shape_distance_weighted * self.concordance_coef))
-            # Experiment: We could also use an exponential to modulate the conv with `shape_distance_weighted`. This
-            # punishes shape mismatch more aggressively. It could be a good idea if the shapes end up having very low
-            # variance(looking all similar).
-            # out = functional.relu(conv_out) * torch.exp(-shape_distance_weighted)
+                # shape_attended_features = functional.relu(self.bn2d(conv_out - shape_distance_weighted * self.concordance_coef))
+                # Experiment: We could also use an exponential to modulate the conv with `shape_distance_weighted`. This
+                # punishes shape mismatch more aggressively. It could be a good idea if the shapes end up having very low
+                # variance(looking all similar).
+                # out = functional.relu(conv_out) * torch.exp(-shape_distance_weighted)
 
-            # ********** Aggregating shapes in the convolution window **********
-            # The mean can be a weighted/attantion mean which uses `shape_attended_features` to create a query. Here the query
-            # (aka weights) is calculated using a convolution operation. The weights then are unfolded into windows and a
-            # softmax ensures that the weights in each window sums to one. Softmax can be replaced with other normalization as
-            # long as the weight are possitive and sum to one.
-            # # Method 1:
-            # shape_query = self.conv2(shape_attended_features)  # Experiment: add relu after conv
-            # # This is a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
-            # # be experimented with. I think it has to do with random walks.
-            # shape_query = shape_query  # / self.query_scale_factor
-            # shape_query_unfolded = functional.softmax(unfold(shape_query, (self.k, self.k), padding=1), dim=1).unsqueeze(1)
-            #
-            # # Method 2: A different method for calculating the query
-            # # shape_query = torch.norm(shape_attended_features, p=1, dim=1, keepdim=True)
-            # # shape_query = unfold(shape_query, (self.k, self.k), padding=1)
-            # # shape_query_unfolded = (shape_query / torch.norm(shape_query, p=1, dim=1, keepdim=True)).unsqueeze(1)
-            #
-            # # This line computes the weighted average of means for each window
-            # window_means = torch.sum(unfold(x_padded[:, -5:-3, ...], (self.k, self.k)).
-            #     view(-1, 2, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
-            #
-            # # Part_1 is contribution of variances of ellipses. Part_2 is the contribution of how far the mean of each ellipse is
-            # # from the mean of the window.
-            # window_var_part_1 = torch.sum(
-            #     unfold(x_padded[:, -3:-1, ...], (self.k, self.k)).view(-1, 2, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
-            # window_var_part_2 = (((unfold(x_padded[:, -5:-3, ...], (self.k, self.k)).view(-1, 2, self.k * self.k,
-            #                                                                num_of_win) - window_means.unsqueeze(2)) ** 2) * shape_query_unfolded).sum(dim=2)
-            # window_var = window_var_part_1 + window_var_part_2
-            # # Part_1 is contribution of covariances of ellipses. Part_2 is the contribution of how far the mean of each ellipse is
-            # # from the mean of the window.
-            # window_covar_part_1 = torch.sum(
-            #     unfold(x_padded[:, -1:, ...], (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
-            # window_covar_part_2 = \
-            #     (((unfold(x_padded[:, -5:-4, ...], (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) - window_means[:,0:1,:].unsqueeze(2)) *
-            #     (unfold(x_padded[:, -4:-3, ...], (self.k, self.k)).view(-1, 1, self.k*self.k,num_of_win) - window_means[:,1:2,:].unsqueeze(2))) *
-            #      (shape_query_unfolded)).sum(dim=2)
-            # window_covar = window_covar_part_1 + window_covar_part_2
-            # window_aggregated_shapes = torch.cat([window_means, window_var, window_covar], dim=1)
-            # window_aggregated_shapes = fold(window_aggregated_shapes, (x_padded.shape[2]-self.k+1, x_padded.shape[3]-self.k+1), (1, 1))
-            # output = torch.cat([shape_attended_features, window_aggregated_shapes], dim=1)
+                # ********** Aggregating shapes in the convolution window **********
+                # The mean can be a weighted/attantion mean which uses `shape_attended_features` to create a query. Here the query
+                # (aka weights) is calculated using a convolution operation. The weights then are unfolded into windows and a
+                # softmax ensures that the weights in each window sums to one. Softmax can be replaced with other normalization as
+                # long as the weight are possitive and sum to one.
+                # # Method 1:
+                # shape_query = self.conv2(shape_attended_features)  # Experiment: add relu after conv
+                # # This is a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
+                # # be experimented with. I think it has to do with random walks.
+                # shape_query = shape_query  # / self.query_scale_factor
+                # shape_query_unfolded = functional.softmax(unfold(shape_query, (self.k, self.k), padding=1), dim=1).unsqueeze(1)
+                #
+                # # Method 2: A different method for calculating the query
+                # # shape_query = torch.norm(shape_attended_features, p=1, dim=1, keepdim=True)
+                # # shape_query = unfold(shape_query, (self.k, self.k), padding=1)
+                # # shape_query_unfolded = (shape_query / torch.norm(shape_query, p=1, dim=1, keepdim=True)).unsqueeze(1)
+                #
+                # # This line computes the weighted average of means for each window
+                # window_means = torch.sum(unfold(x_padded[:, -5:-3, ...], (self.k, self.k)).
+                #     view(-1, 2, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
+                #
+                # # Part_1 is contribution of variances of ellipses. Part_2 is the contribution of how far the mean of each ellipse is
+                # # from the mean of the window.
+                # window_var_part_1 = torch.sum(
+                #     unfold(x_padded[:, -3:-1, ...], (self.k, self.k)).view(-1, 2, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
+                # window_var_part_2 = (((unfold(x_padded[:, -5:-3, ...], (self.k, self.k)).view(-1, 2, self.k * self.k,
+                #                                                                num_of_win) - window_means.unsqueeze(2)) ** 2) * shape_query_unfolded).sum(dim=2)
+                # window_var = window_var_part_1 + window_var_part_2
+                # # Part_1 is contribution of covariances of ellipses. Part_2 is the contribution of how far the mean of each ellipse is
+                # # from the mean of the window.
+                # window_covar_part_1 = torch.sum(
+                #     unfold(x_padded[:, -1:, ...], (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) * shape_query_unfolded, dim=2)
+                # window_covar_part_2 = \
+                #     (((unfold(x_padded[:, -5:-4, ...], (self.k, self.k)).view(-1, 1, self.k*self.k, num_of_win) - window_means[:,0:1,:].unsqueeze(2)) *
+                #     (unfold(x_padded[:, -4:-3, ...], (self.k, self.k)).view(-1, 1, self.k*self.k,num_of_win) - window_means[:,1:2,:].unsqueeze(2))) *
+                #      (shape_query_unfolded)).sum(dim=2)
+                # window_covar = window_covar_part_1 + window_covar_part_2
+                # window_aggregated_shapes = torch.cat([window_means, window_var, window_covar], dim=1)
+                # window_aggregated_shapes = fold(window_aggregated_shapes, (x_padded.shape[2]-self.k+1, x_padded.shape[3]-self.k+1), (1, 1))
+                # output = torch.cat([shape_attended_features, window_aggregated_shapes], dim=1)
 
-            output = torch.cat([shape_attended_features, x[:, -5:, ...]], dim=1)
+                output = torch.cat([shape_attended_features, x[:, -5:, ...]], dim=1)
+            else:
+                x_padded = self.pad2d(x)
+                num_of_win = x.shape[2] * x.shape[3]
+                # Only compute new shapes if `self.shape_passthrough` is False
+                # ********** Compute shape concordance **********
+                # Need to `clone()` because more than one element of the unfolded tensor may refer to a single memory location.
+                # This would make subtraction of the local window centers to work properly when writing back to `shape_windows`
+                shape_windows = unfold(x_padded[:, -5:, ...], self.k).view(-1, 5, self.k * self.k, num_of_win).clone()
+                shape_windows[:, -5:-3, :, :] = shape_windows[:, -5:-3, :, :] - shape_windows[:, -5:-3, self.win_center_idx:self.win_center_idx + 1,
+                                                                                :]
+                shapes_delta = (shape_windows.unsqueeze(1) - self.shapes_kernel).view(-1, self.out_channels, 5 * (self.k ** 2), num_of_win)
+                # shapes_delta = (torch.exp((shape_windows.unsqueeze(1) - self.shapes_kernel)**2)).view(-1, self.out_channels, 5*self.k**2, num_of_win)
+                # shape_difference = shapes_delta.sum(dim=2)
+                shape_difference = torch.norm(shapes_delta, p=1, dim=2)  # / self.query_scale_factor  # experiment: l1 norm, could be other norms
+                # shape_difference_soft = torch.softmax(-shape_difference)  # bigger difference results in smaller multiplier
+                # shape_difference_soft = shape_difference_soft*self.shapes_channel_weight # learnable scale factor
+                self.shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
+                # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
+                # shape_distance_weighted = self.bn2d3(shape_distance_weighted)
+                shape_distance_weighted = functional.relu(self.bn2d2(self.conv3(self.shape_distance_weighted)))
+                # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
+                conv_out = self.conv(torch.cat([x_padded[:, :-5, ...], torch.zeros_like(self.pad2d(shape_distance_weighted))], dim=1))
+                shape_attended_features = functional.relu(self.bn2d(conv_out))
+
+                output = torch.cat([shape_attended_features, x[:, -5:, ...]], dim=1)
         else:
             conv_out = functional.relu(self.bn2d(self.conv(self.pad2d(x[:, :-5, ...]))))
             output = torch.cat([conv_out, x[:, -5:, ...]], dim=1)
@@ -154,12 +186,12 @@ class SpatialMaxpool2d_2(torch.nn.Module):
     def forward(self, x):
         x = self.pad2d(x)
         x_h, x_w = x.shape[2], x.shape[3]
-        num_of_win2= (x_h - self.k + 1) * (x_w - self.k + 1)
+        num_of_win2 = (x_h - self.k + 1) * (x_w - self.k + 1)
         in_channels, h, w = x.shape[1], x.shape[2], x.shape[3]
         pooled_features, idx = self.max_pool(x[:, :-5, ...])
         num_of_win = pooled_features.shape[2] * pooled_features.shape[3]
         # ********** Shape aggregation **********
-        max_unpooled = self.max_unpool(pooled_features, idx, output_size=(h, w))
+        max_unpooled = self.max_unpool(pooled_features, idx, output_size=(h, w)).detach()
         # The division a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
         # be experimented with. I think it has to do with random walks.
         shape_weights = torch.norm(max_unpooled, p=1, dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(torch.FloatTensor).sqrt()
@@ -187,14 +219,18 @@ class SpatialMaxpool2d_2(torch.nn.Module):
         window_covar = window_covar_part_1 + window_covar_part_2
         window_aggregated_shapes = torch.cat([window_means, window_var, window_covar], dim=1)
         window_aggregated_shapes = fold(window_aggregated_shapes, (x_h - self.k + 1, x_h - self.k + 1), (1, 1))
-        # todo `dim=` are wrong, they are place holders
-        neghbourhood_weights = fold(shape_windows_weights.sum(dim=1, keepdim=True), (x_h - self.k + 1, x_w - self.k + 1), (1, 1))
-        _, heavy_neighbourhoods_idx = self.max_pool2(neghbourhood_weights)
-        # gather indices from
-        heavy_neighbourhoods_idx = heavy_neighbourhoods_idx.expand(heavy_neighbourhoods_idx.shape[0], 5, heavy_neighbourhoods_idx.shape[2],
-                                        heavy_neighbourhoods_idx.shape[3])
-        flattened_window_shapes = window_aggregated_shapes.flatten(start_dim=2)
-        pooled_shapes = flattened_window_shapes.gather(dim=2, index=heavy_neighbourhoods_idx.flatten(start_dim=2)).view_as(heavy_neighbourhoods_idx)
+        # whether to do max pool overlapping neighbourhoods or do regular pooling
+        if False:
+            # todo `dim=` are wrong, they are place holders
+            neghbourhood_weights = fold(shape_windows_weights.sum(dim=1, keepdim=True), (x_h - self.k + 1, x_w - self.k + 1), (1, 1))
+            _, heavy_neighbourhoods_idx = self.max_pool2(neghbourhood_weights)
+            # gather indices from
+            heavy_neighbourhoods_idx = heavy_neighbourhoods_idx.expand(heavy_neighbourhoods_idx.shape[0], 5, heavy_neighbourhoods_idx.shape[2],
+                                            heavy_neighbourhoods_idx.shape[3])
+            flattened_window_shapes = window_aggregated_shapes.flatten(start_dim=2)
+            pooled_shapes = flattened_window_shapes.gather(dim=2, index=heavy_neighbourhoods_idx.flatten(start_dim=2)).view_as(heavy_neighbourhoods_idx)
+        else:
+            pooled_shapes = window_aggregated_shapes[:, :, ::2, ::2]
         # output = torch.cat([pooled_features[:, :, :-1, :-1], pooled_shapes], dim=1)
         output = torch.cat([pooled_features[:, :, :pooled_shapes.shape[2], :pooled_shapes.shape[3]], pooled_shapes], dim=1)
         return output

@@ -139,7 +139,8 @@ class SpatialModel1(nn.Module):
             BatchNorm2d = BatchNorm2dNormal
         else:
             Conv2d = SpatialConv2d
-            MaxPool2d = SpatialMaxpool2d
+            MaxPool2d = SpatialMaxpool2d_2
+            # MaxPool2d = SpatialMaxpool2d
             BatchNorm2d = SpatialBatchNorm2d
             Conv2d.sparsity = sparsity
 
@@ -166,16 +167,17 @@ class SpatialModel1(nn.Module):
         self.classifier = nn.Linear(2048, 10)
         # self.classifier = nn.Linear(1152, 10)
         self.batch_count = 0
-        self.test_img_interval = 400
+        self.test_img_interval = 3000
 
 
     def forward(self, x):
 
         if self.batch_count > self.test_img_interval:
             # Creating a dummy input to inspect shape pooling
-            x[:, :-5, :, :] = torch.zeros_like(x[:, :-5, :, :]) - 1 + torch.randn_like(x[:, :-5, :, :])/20
-            ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
-            x[:, :-5, 12:28, 12:16] = ones
+            # x[:, :-5, :, :] = torch.zeros_like(x[:, :-5, :, :]) - 1 + torch.randn_like(x[:, :-5, :, :])/20
+            # ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
+            # x[:, :-5, 12:28, 12:16] = ones
+            pass
         c1 = self.conv1(x)
         mp1 = self.mp1(c1)
         c2 = self.conv2(mp1)
@@ -202,7 +204,7 @@ class SpatialModel1(nn.Module):
             plot_shapes(self.mp1(self.mp1(mp1)), ax6)
             plt.show()
             self.batch_count = 0
-            self.test_img_interval = 40
+            self.test_img_interval = 300
         self.batch_count += 1
         return out
 
@@ -210,7 +212,7 @@ class SpatialModel1(nn.Module):
 def test():
     net = SpatialModel1()
     print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
-    x = torch.randn(2,3+5,32,32)
+    x = torch.randn(2, 3+5, 32, 32)
     y = net(x)
     print(y.size())
 
