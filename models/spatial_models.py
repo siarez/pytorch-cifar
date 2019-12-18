@@ -167,7 +167,7 @@ class SpatialModel1(nn.Module):
         self.classifier = nn.Linear(2048, 10)
         # self.classifier = nn.Linear(1152, 10)
         self.batch_count = 0
-        self.test_img_interval = 3000
+        self.test_img_interval = 10000
 
 
     def forward(self, x):
