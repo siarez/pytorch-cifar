@@ -14,6 +14,7 @@ import argparse
 from models import *
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
+from utils import AverageMeter
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -39,7 +40,7 @@ print('Timestamp: ', timestamp)
 # Data
 print('==> Preparing data..')
 transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
+    transforms.RandomCrop(32, padding=4, padding_mode='symmetric'),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
@@ -131,8 +132,11 @@ def shape_distance_loss(model):
             loss += (p/(p.mean(dim=1, keepdim=True))).prod(dim=1).sum()
             # loss += p.mean()
     return loss
+
 # Training
-shape_distance_loss_coef = 0.1
+shape_distance_loss_coef = 0.05
+
+
 def train(epoch):
     global shape_distance_loss_coef
     print('\nEpoch: %d' % epoch)
@@ -140,6 +144,9 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
+    acc_meter = AverageMeter(window_size=100)
+    loss_meter = AverageMeter(window_size=100)
+
     pbar = tqdm(enumerate(trainloader), total=len(trainloader))
     for batch_idx, (inputs, targets) in pbar:
         # shape_distance_loss_coef *= 0.995
@@ -160,6 +167,8 @@ def train(epoch):
         _, predicted = outputs.max(1)
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
+        acc_meter.update(predicted.eq(targets).type(torch.DoubleTensor).mean().item())
+        loss_meter.update(loss.item())
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 10 == 0:
             for n, p in net.named_parameters():
@@ -170,15 +179,22 @@ def train(epoch):
                         writer.add_histogram(n+'_means', p[:, :, 0:2, ...], epoch*len(trainloader) + batch_idx)
                         writer.add_histogram(n+'_var', p[:, :, 2:4, ...], epoch*len(trainloader) + batch_idx)
                         writer.add_histogram(n+'_covar', p[:, :, 4, ...], epoch*len(trainloader) + batch_idx)
+                    if 'conv3_shape_mux' in n:
+                        writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
             for n, p in net.named_buffers():
                 if 'shape_distance_weighted' in n:
                     writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
+                    distance_min = p.min(dim=1)
+                    writer.add_histogram(n+'_min', distance_min[0], epoch * len(trainloader) + batch_idx)
+                    writer.add_histogram(n+'_min_idx', distance_min[1], epoch * len(trainloader) + batch_idx)
 
             writer.add_scalar('Batch Train Loss', train_loss / (batch_idx + 1), epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train Acc.', 100. * correct / total, epoch*len(trainloader) + batch_idx)
+            writer.add_scalar('Batch Train Acc. meter', acc_meter.avg, epoch*len(trainloader) + batch_idx)
+            writer.add_scalar('Batch Train loss. meter', loss_meter.avg, epoch*len(trainloader) + batch_idx)
 
-    writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
-    writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
+    # writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
+    # writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
     # for n, p in net.named_parameters():
     #     # logging histogram of parameters in the "shape pathway"
     #     if 'shape' in n and 'shape_difference' not in n:
