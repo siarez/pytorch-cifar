@@ -149,9 +149,10 @@ class SpatialModel1(nn.Module):
         self.conv3 = Conv2d(64, 128, kernel_size=3, padding=1)
         self.conv4 = Conv2d(128, 128, kernel_size=3, padding=1)
 
-        self.mp1 = MaxPool2d(kernel_size=2, stride=2, padding=(0, 1, 0, 1))
-        self.mp2 = MaxPool2d(kernel_size=2, stride=2, padding=(0, 1, 0, 1))
-        self.mp3 = MaxPool2d(kernel_size=2, stride=2, padding=(0, 1, 0, 1))
+        padding = 0 if normal else (0, 1, 0, 1)
+        self.mp1 = MaxPool2d(kernel_size=2, stride=2, padding=padding)
+        self.mp2 = MaxPool2d(kernel_size=2, stride=2, padding=padding)
+        self.mp3 = MaxPool2d(kernel_size=2, stride=2, padding=padding)
         # self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
         # self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
         # self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
@@ -164,10 +165,10 @@ class SpatialModel1(nn.Module):
         # self.classifier = nn.Linear(2128, 10)
         # self.classifier = nn.Linear(3325, 10)
         # self.classifier = nn.Linear(3200, 10)
-        self.classifier = nn.Linear(2048, 10)
+        self.classifier = nn.Linear(1968, 100) if normal else nn.Linear(2048, 100)
         # self.classifier = nn.Linear(1152, 10)
         self.batch_count = 0
-        self.test_img_interval = 10000
+        self.test_img_interval = 1000000
 
 
     def forward(self, x):

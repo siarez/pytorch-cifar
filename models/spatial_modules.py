@@ -14,12 +14,11 @@ class SpatialConv2d(torch.nn.Module):
         self.cat_distance = cat_distance
         self.conv = Conv2d(in_channels + (out_channels if cat_distance else 0), out_channels, kernel_size)
         self.conv2 = Conv2d(out_channels, 1, kernel_size=1)
-        self.conv3_shape_mux = Conv2d(out_channels, out_channels, kernel_size=1, bias=False, )
+        # self.conv3_shape_mux = Conv2d(out_channels, out_channels, kernel_size=1, bias=False, )
         self.pad2d = torch.nn.ReplicationPad2d(padding)  # Replication padding makes the most sense to me
         # moved batchnorm here so I can do it before the Relu, like the original architecture
         self.bn2d = BatchNorm2d(out_channels, affine=False)
         self.bn2d2 = BatchNorm2d(out_channels, affine=False)
-        self.bn2d3 = BatchNorm2d(out_channels, affine=False)
         # Initializing shape kernels
         kernel_init_coef = 1.0  # / torch.sqrt(torch.tensor(kernel_size * kernel_size * 5.0))
         self.shapes_kernel = torch.zeros((1, out_channels, 5, kernel_size * kernel_size, 1))
@@ -47,6 +46,8 @@ class SpatialConv2d(torch.nn.Module):
         self.concordance_coef2 = Parameter(torch.tensor(2.0))
         self.shape_difference_logging = None
         self.register_buffer('shape_distance_weighted', None)
+        self.register_buffer('shape_distance_weighted_muxed', None)
+        self.register_buffer('conv_batchnorm', None)
         # utils.clip_grad_value_(self.parameters(), 0.1)
         
     def forward(self, x):
@@ -70,9 +71,10 @@ class SpatialConv2d(torch.nn.Module):
                 self.shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
                 # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
                 # shape_distance_weighted = self.bn2d3(shape_distance_weighted)
-                shape_distance_weighted = functional.relu(self.bn2d2(self.conv3_shape_mux(self.shape_distance_weighted)))
-                # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
-                shape_attended_features = functional.relu(self.bn2d(conv_out) - shape_distance_weighted)
+                # self.shape_distance_weighted_muxed = functional.relu(self.bn2d2(self.conv3_shape_mux(self.shape_distance_weighted)))
+                self.shape_distance_weighted_muxed = functional.relu(self.bn2d2(self.shape_distance_weighted))
+                self.conv_batchnorm = self.bn2d(conv_out)
+                shape_attended_features = functional.relu(self.conv_batchnorm - self.shape_distance_weighted_muxed)
                 # shape_attended_features = functional.leaky_relu(self.bn2d(conv_out)) * shape_distance_weighted
                 # shape_attended_features = functional.leaky_relu(self.bn2d(conv_out) + functional.leaky_relu(self.bn2d2(self.conv3(conv_out))) * self.shape_distance_weighted)
 
@@ -126,6 +128,8 @@ class SpatialConv2d(torch.nn.Module):
 
                 output = torch.cat([shape_attended_features, x[:, -5:, ...]], dim=1)
             else:
+                """Here the idea is to append the distances to the input of the convolution, instead of subtracting them from its output.
+                The hope is for the convolution to learn to use the distance information. It has not worked very well so far."""
                 x_padded = self.pad2d(x)
                 num_of_win = x.shape[2] * x.shape[3]
                 # Only compute new shapes if `self.shape_passthrough` is False
@@ -144,9 +148,11 @@ class SpatialConv2d(torch.nn.Module):
                 self.shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
                 # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
                 # shape_distance_weighted = self.bn2d3(shape_distance_weighted)
-                shape_distance_weighted = functional.relu(self.bn2d2(self.conv3_shape_mux(self.shape_distance_weighted)))
+                # shape_distance_weighted = functional.relu(self.bn2d2(self.conv3_shape_mux(self.shape_distance_weighted)))
+                shape_distance_weighted = functional.relu(self.bn2d2(self.shape_distance_weighted))
                 # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
-                conv_out = self.conv(torch.cat([x_padded[:, :-5, ...], torch.zeros_like(self.pad2d(shape_distance_weighted))], dim=1))
+                # conv_out = self.conv(torch.cat([x_padded[:, :-5, ...], torch.zeros_like(self.pad2d(shape_distance_weighted))], dim=1))
+                conv_out = self.conv(torch.cat([x_padded[:, :-5, ...], self.pad2d(shape_distance_weighted)], dim=1))
                 shape_attended_features = functional.relu(self.bn2d(conv_out))
 
                 output = torch.cat([shape_attended_features, x[:, -5:, ...]], dim=1)

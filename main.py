@@ -51,10 +51,10 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+trainset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch, shuffle=True, num_workers=2)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+testset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test)
 testloader = torch.utils.data.DataLoader(testset, batch_size=args.batch, shuffle=False, num_workers=2)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
@@ -70,7 +70,7 @@ else:
         net = SpatialVGG(args.model, normal=args.normal)
 
 print('Num of parameters: ', sum(p.numel() for p in net.parameters() if p.requires_grad))
-
+# exit(0)
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
@@ -129,7 +129,7 @@ def shape_distance_loss(model):
     loss = 0
     for n, p in model.named_buffers():
         if 'shape_distance_weighted' in n:
-            loss += (p/(p.mean(dim=1, keepdim=True))).prod(dim=1).sum()
+            loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001)).prod(dim=1).sum()
             # loss += p.mean()
     return loss
 
@@ -153,7 +153,7 @@ def train(epoch):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         with autograd.detect_anomaly():
-            inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
+            inputs = inputs if (args.plain or args.normal) else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
             loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
             try:
@@ -182,17 +182,24 @@ def train(epoch):
                     if 'conv3_shape_mux' in n:
                         writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
             for n, p in net.named_buffers():
-                if 'shape_distance_weighted' in n:
+                if 'shape_distance_weighted' == n.split('.')[-1]:
                     writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
                     distance_min = p.min(dim=1)
                     writer.add_histogram(n+'_min', distance_min[0], epoch * len(trainloader) + batch_idx)
                     writer.add_histogram(n+'_min_idx', distance_min[1], epoch * len(trainloader) + batch_idx)
+                if 'shape_distance_weighted_muxed' == n.split('.')[-1]:
+                    writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
+                if 'conv_batchnorm' == n.split('.')[-1]:
+                    writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
 
             writer.add_scalar('Batch Train Loss', train_loss / (batch_idx + 1), epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train Acc.', 100. * correct / total, epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train Acc. meter', acc_meter.avg, epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train loss. meter', loss_meter.avg, epoch*len(trainloader) + batch_idx)
 
+        if batch_idx % 100 == 0:
+            test(epoch*len(trainloader) + batch_idx)
+            net.train()
     # writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
     # writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
     # for n, p in net.named_parameters():
@@ -201,7 +208,7 @@ def train(epoch):
     #         writer.add_histogram(n, p, epoch)
 
 
-def test(epoch):
+def test(step):
     global best_acc
     net.eval()
     test_loss = 0
@@ -211,7 +218,7 @@ def test(epoch):
         pbar = tqdm(enumerate(testloader), total=len(testloader))
         for batch_idx, (inputs, targets) in pbar:
             inputs, targets = inputs.to(device), targets.to(device)
-            inputs = inputs if args.plain else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
+            inputs = inputs if (args.plain or args.normal) else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
             test_loss += loss.item()
@@ -220,8 +227,8 @@ def test(epoch):
             correct += predicted.eq(targets).sum().item()
             pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)'
                 % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
-        writer.add_scalar('Test Loss', test_loss/(batch_idx+1), epoch)
-        writer.add_scalar('Test Acc.', 100.*correct/total, epoch)
+        writer.add_scalar('Test Loss', test_loss / (batch_idx+1), step)
+        writer.add_scalar('Test Acc.', 100. * correct / total, step)
 
     # Save checkpoint.
     acc = 100.*correct/total
@@ -230,7 +237,7 @@ def test(epoch):
         state = {
             'net': net.state_dict(),
             'acc': acc,
-            'epoch': epoch,
+            'epoch': step,
             'timestamp': timestamp,
             **vars(args)
         }
@@ -242,6 +249,6 @@ def test(epoch):
 
 for epoch in tqdm(range(start_epoch, start_epoch+200)):
     train(epoch)
-    test(epoch)
+    # test(epoch)
 
 writer.add_hparams(vars(args), {'hparam/accuracy': best_acc})
