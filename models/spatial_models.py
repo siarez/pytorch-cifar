@@ -4,7 +4,8 @@ import torch.nn as nn
 from torch.nn import Conv2d as Conv2dNormal
 from torch.nn import MaxPool2d as MaxPool2dNormal
 from torch.nn import BatchNorm2d as BatchNorm2dNormal
-from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d, SpatialMaxpool2d_2, SpatialMaxpool2d_3
+from torch.nn import ReLU as ReLUNormal
+from .spatial_modules import SpatialConv2d, SpatialMaxpool2d, SpatialBatchNorm2d, SpatialMaxpool2d_2, SpatialReLU, DummyLayer
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.stats import multivariate_normal
@@ -14,6 +15,7 @@ import matplotlib.transforms as transforms
 Conv2d = None
 MaxPool2d = None
 BatchNorm2d = None
+ReLU = None
 
 
 def img_show(img, ax, idx=0):
@@ -127,22 +129,24 @@ def plot_shapes(window_aggregated_shapes, ax, idx=0, size=32):
 
 
 class SpatialModel1(nn.Module):
-    def __init__(self, normal=False, sparsity=0.0):
+    def __init__(self, normal=False, passthrough=False):
         super(SpatialModel1, self).__init__()
         global Conv2d
         global MaxPool2d
         global BatchNorm2d
+        global ReLU
         self.normal = normal
         if normal:
             Conv2d = Conv2dNormal
             MaxPool2d = MaxPool2dNormal
             BatchNorm2d = BatchNorm2dNormal
+            ReLU = ReLUNormal
         else:
             Conv2d = SpatialConv2d
             MaxPool2d = SpatialMaxpool2d_2
             # MaxPool2d = SpatialMaxpool2d
-            BatchNorm2d = SpatialBatchNorm2d
-            Conv2d.sparsity = sparsity
+            BatchNorm2d = DummyLayer  # Because the conv layer is doing its own bn
+            ReLU = SpatialReLU
 
         self.conv1 = Conv2d(3, 32, kernel_size=3, padding=1)
         self.conv2 = Conv2d(32, 64, kernel_size=3, padding=1)
@@ -153,6 +157,13 @@ class SpatialModel1(nn.Module):
         self.mp1 = MaxPool2d(kernel_size=2, stride=2, padding=padding)
         self.mp2 = MaxPool2d(kernel_size=2, stride=2, padding=padding)
         self.mp3 = MaxPool2d(kernel_size=2, stride=2, padding=padding)
+
+        self.bn1 = BatchNorm2d(32)
+        self.bn2 = BatchNorm2d(64)
+        self.bn3 = BatchNorm2d(128)
+        self.bn4 = BatchNorm2d(128)
+
+        self.relu = ReLU()
         # self.mp1 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
         # self.mp2 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
         # self.mp3 = MaxPool2d(kernel_size=3, stride=2, padding=(1, 2, 1, 2))
@@ -179,12 +190,12 @@ class SpatialModel1(nn.Module):
             # ones = torch.ones(x.shape[0], x.shape[1] - 5, 16, 4) + torch.randn((x.shape[0], x.shape[1] - 5, 16, 4))/20
             # x[:, :-5, 12:28, 12:16] = ones
             pass
-        c1 = self.conv1(x)
+        c1 = self.relu(self.bn1(self.conv1(x)))
         mp1 = self.mp1(c1)
-        c2 = self.conv2(mp1)
+        c2 = self.relu(self.bn2(self.conv2(mp1)))
         mp2 = self.mp2(c2)
-        c3 = self.conv3(mp2)
-        c4 = self.conv4(c3)
+        c3 = self.relu(self.bn3(self.conv3(mp2)))
+        c4 = self.relu(self.bn4(self.conv4(c3)))
         mp3 = self.mp3(c4)
         mp3_flat = mp3[:, :-5, ...].view(mp3.size(0), -1)
         out = self.classifier(mp3_flat)

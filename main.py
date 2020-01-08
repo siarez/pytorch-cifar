@@ -26,6 +26,9 @@ parser.add_argument('--sparsity', default=0.0, type=float, help='convolution bac
 parser.add_argument('--resume', '-r', default='', type=str, help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
 parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
+parser.add_argument('--passthrough', action='store_true', default=False, help='Tells the spacial conv to ignore spatial features. '
+                                                                              'It is a sanity check to make sure the model is identical to using '
+                                                                              'regular layers if shape information is ignored.')
 parser.add_argument('--graph', action='store_true', default=False, help='Logs the model graph for Tensorboard')
 parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
 args = parser.parse_args()
@@ -65,7 +68,7 @@ if args.plain:
     net = VGG(args.model)
 else:
     if args.model == 'sp1':
-        net = SpatialModel1(normal=args.normal)
+        net = SpatialModel1(normal=args.normal, passthrough=args.passthrough)
     else:
         net = SpatialVGG(args.model, normal=args.normal)
 
@@ -116,25 +119,23 @@ def shapes_kernel_loss(model):
             loss += 1.0 / (p.mean() * p.std())
     return loss
 
-def shapes_kernel_loss(model):
-    """Added a term that prevents shape kernels to be zero."""
-    loss = 0.
-    for n, p in model.module.named_parameters():
-        if 'shapes_kernel' in n:
-            loss += 1.0 / (p.mean() * p.std())
-    return loss
 
 def shape_distance_loss(model):
     """Adds a loss term that corresponds to how far the kernels are from pooled shapes"""
     loss = 0
+    dropout = 0.8
     for n, p in model.named_buffers():
-        if 'shape_distance_weighted' in n:
+        if 'shape_distance_weighted' == n.split('.')[-1]:
+            drop_mask = torch.bernoulli(torch.zeros((1, p.shape[1], 1, 1), device=p.device) + dropout)  # This prevents one kernel from "winning" all the time and getting all the gradients
+            # (torch.zeros((out_channels, in_channels // groups, kernel_size, kernel_size), requires_grad=False).uniform_() > 0.7).float()
+
             loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001)).prod(dim=1).sum()
+            # loss += ((p*drop_mask)/(p.mean(dim=1, keepdim=True) + 0.000001)).min(dim=1)[0].sum() # experiment: try min instead of prod
             # loss += p.mean()
     return loss
 
 # Training
-shape_distance_loss_coef = 0.05
+shape_distance_loss_coef = 1
 
 
 def train(epoch):
@@ -155,7 +156,8 @@ def train(epoch):
         with autograd.detect_anomaly():
             inputs = inputs if (args.plain or args.normal) else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
-            loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
+            # loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
+            loss = shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
             try:
                 loss.backward()
             except (Exception, ArithmeticError) as e:
@@ -170,7 +172,7 @@ def train(epoch):
         acc_meter.update(predicted.eq(targets).type(torch.DoubleTensor).mean().item())
         loss_meter.update(loss.item())
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-        if batch_idx % 10 == 0:
+        if batch_idx % 20 == 0:
             for n, p in net.named_parameters():
                 # logging histogram of parameters in the "shape pathway"
                 if (('shape' in n) and p.grad is not None):
@@ -181,6 +183,7 @@ def train(epoch):
                         writer.add_histogram(n+'_covar', p[:, :, 4, ...], epoch*len(trainloader) + batch_idx)
                     if 'conv3_shape_mux' in n:
                         writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
+
             for n, p in net.named_buffers():
                 if 'shape_distance_weighted' == n.split('.')[-1]:
                     writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
@@ -191,13 +194,17 @@ def train(epoch):
                     writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
                 if 'conv_batchnorm' == n.split('.')[-1]:
                     writer.add_histogram(n, p, epoch * len(trainloader) + batch_idx)
+                if 'input_shapes' in n:
+                    writer.add_histogram(n+'_means', p[:, 0:2, ...], epoch*len(trainloader) + batch_idx)
+                    writer.add_histogram(n+'_var', p[:, 2:4, ...], epoch*len(trainloader) + batch_idx)
+                    writer.add_histogram(n+'_covar', p[:, 4, ...], epoch*len(trainloader) + batch_idx)
 
             writer.add_scalar('Batch Train Loss', train_loss / (batch_idx + 1), epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train Acc.', 100. * correct / total, epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train Acc. meter', acc_meter.avg, epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train loss. meter', loss_meter.avg, epoch*len(trainloader) + batch_idx)
 
-        if batch_idx % 100 == 0:
+        if batch_idx % 200 == 0:
             test(epoch*len(trainloader) + batch_idx)
             net.train()
     # writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
