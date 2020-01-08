@@ -126,16 +126,19 @@ def shape_distance_loss(model):
     dropout = 0.8
     for n, p in model.named_buffers():
         if 'shape_distance_weighted' == n.split('.')[-1]:
-            drop_mask = torch.bernoulli(torch.zeros((1, p.shape[1], 1, 1), device=p.device) + dropout)  # This prevents one kernel from "winning" all the time and getting all the gradients
+            # drop_mask = torch.bernoulli(torch.zeros((1, p.shape[1], 1, 1), device=p.device) + dropout)  # This prevents one kernel from "winning" all the time and getting all the gradients
             # (torch.zeros((out_channels, in_channels // groups, kernel_size, kernel_size), requires_grad=False).uniform_() > 0.7).float()
 
-            loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001)).prod(dim=1).sum()
+            # loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001)).prod(dim=1).mean()
+            loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001).detach()).prod(dim=1).mean()
+            # loss += (p/p.shape[1]).prod(dim=1).mean()
+            # loss += p.mean()
             # loss += ((p*drop_mask)/(p.mean(dim=1, keepdim=True) + 0.000001)).min(dim=1)[0].sum() # experiment: try min instead of prod
             # loss += p.mean()
     return loss
 
 # Training
-shape_distance_loss_coef = 1
+shape_distance_loss_coef = 1.
 
 
 def train(epoch):
@@ -156,8 +159,8 @@ def train(epoch):
         with autograd.detect_anomaly():
             inputs = inputs if (args.plain or args.normal) else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
-            # loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
-            loss = shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
+            loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
+            # loss = shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
             try:
                 loss.backward()
             except (Exception, ArithmeticError) as e:
