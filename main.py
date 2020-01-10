@@ -31,6 +31,7 @@ parser.add_argument('--passthrough', action='store_true', default=False, help='T
                                                                               'regular layers if shape information is ignored.')
 parser.add_argument('--graph', action='store_true', default=False, help='Logs the model graph for Tensorboard')
 parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
+parser.add_argument('--ds', choices=['pascal', 'cifar100'], default='cifar100', help='dataset')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -53,6 +54,9 @@ transform_test = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
+
+# pascal_train = torchvision.datasets.VOCDetection(root='/home/siarez/projects/pascal-voc/', year='2012', image_set='train', download=False, transform=None, target_transform=None, transforms=None)
+# pascal_train = torchvision.datasets.VOCDetection(root='./data', year='2012', image_set='train', download=True, transform=None, target_transform=None, transforms=None)
 
 trainset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch, shuffle=True, num_workers=2)
@@ -123,14 +127,14 @@ def shapes_kernel_loss(model):
 def shape_distance_loss(model):
     """Adds a loss term that corresponds to how far the kernels are from pooled shapes"""
     loss = 0
-    dropout = 0.8
+    dropout = 0.5
     for n, p in model.named_buffers():
         if 'shape_distance_weighted' == n.split('.')[-1]:
             # drop_mask = torch.bernoulli(torch.zeros((1, p.shape[1], 1, 1), device=p.device) + dropout)  # This prevents one kernel from "winning" all the time and getting all the gradients
             # (torch.zeros((out_channels, in_channels // groups, kernel_size, kernel_size), requires_grad=False).uniform_() > 0.7).float()
 
             # loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001)).prod(dim=1).mean()
-            loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001).detach()).prod(dim=1).mean()
+            loss += (p/(p.mean(dim=1, keepdim=True) + 0.000001).detach()).prod(dim=1).mean()  # without detach() in the denominator, I get weird bad convergence behavior.
             # loss += (p/p.shape[1]).prod(dim=1).mean()
             # loss += p.mean()
             # loss += ((p*drop_mask)/(p.mean(dim=1, keepdim=True) + 0.000001)).min(dim=1)[0].sum() # experiment: try min instead of prod
@@ -150,6 +154,8 @@ def train(epoch):
     total = 0
     acc_meter = AverageMeter(window_size=100)
     loss_meter = AverageMeter(window_size=100)
+    classification_loss_meter = AverageMeter(window_size=100)
+    shape_loss_meter = AverageMeter(window_size=100)
 
     pbar = tqdm(enumerate(trainloader), total=len(trainloader))
     for batch_idx, (inputs, targets) in pbar:
@@ -159,7 +165,9 @@ def train(epoch):
         with autograd.detect_anomaly():
             inputs = inputs if (args.plain or args.normal) else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
-            loss = criterion(outputs, targets) + shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
+            classification_loss = criterion(outputs, targets)
+            shape_loss = shape_distance_loss_coef * shape_distance_loss(net)
+            loss = classification_loss + shape_loss # + shapes_kernel_loss(net)
             # loss = shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
             try:
                 loss.backward()
@@ -174,6 +182,8 @@ def train(epoch):
         correct += predicted.eq(targets).sum().item()
         acc_meter.update(predicted.eq(targets).type(torch.DoubleTensor).mean().item())
         loss_meter.update(loss.item())
+        classification_loss_meter.update(classification_loss.item())
+        shape_loss_meter.update(shape_loss.item())
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 20 == 0:
             for n, p in net.named_parameters():
@@ -206,6 +216,8 @@ def train(epoch):
             writer.add_scalar('Batch Train Acc.', 100. * correct / total, epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train Acc. meter', acc_meter.avg, epoch*len(trainloader) + batch_idx)
             writer.add_scalar('Batch Train loss. meter', loss_meter.avg, epoch*len(trainloader) + batch_idx)
+            writer.add_scalar('Batch Train classification loss. meter', classification_loss_meter.avg, epoch*len(trainloader) + batch_idx)
+            writer.add_scalar('Batch Train shape loss. meter', shape_loss_meter.avg, epoch*len(trainloader) + batch_idx)
 
         if batch_idx % 200 == 0:
             test(epoch*len(trainloader) + batch_idx)
