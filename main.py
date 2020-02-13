@@ -46,13 +46,16 @@ print('==> Preparing data..')
 transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4, padding_mode='symmetric'),
     transforms.RandomHorizontalFlip(),
+    transforms.Grayscale(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+
 ])
 
 transform_test = transforms.Compose([
+    transforms.Grayscale(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
 # pascal_train = torchvision.datasets.VOCDetection(root='/home/siarez/projects/pascal-voc/', year='2012', image_set='train', download=False, transform=None, target_transform=None, transforms=None)
@@ -138,11 +141,10 @@ def shape_distance_loss(model):
             # loss += (p/p.shape[1]).prod(dim=1).mean()
             # loss += p.mean()
             # loss += ((p*drop_mask)/(p.mean(dim=1, keepdim=True) + 0.000001)).min(dim=1)[0].sum() # experiment: try min instead of prod
-            # loss += p.mean()
     return loss
 
 # Training
-shape_distance_loss_coef = 1.
+shape_distance_loss_coef = 0.25
 
 
 def train(epoch):
@@ -166,8 +168,8 @@ def train(epoch):
             inputs = inputs if (args.plain or args.normal) else torch.cat([inputs, shape_map[:inputs.shape[0], ...]], dim=1)
             outputs = net(inputs)
             classification_loss = criterion(outputs, targets)
-            shape_loss = shape_distance_loss_coef * shape_distance_loss(net)
-            loss = classification_loss + shape_loss # + shapes_kernel_loss(net)
+            shape_loss = shape_distance_loss(net)
+            loss = classification_loss + shape_distance_loss_coef * shape_loss # + shapes_kernel_loss(net)
             # loss = shape_distance_loss_coef * shape_distance_loss(net)  # + shapes_kernel_loss(net)
             try:
                 loss.backward()
@@ -183,7 +185,7 @@ def train(epoch):
         acc_meter.update(predicted.eq(targets).type(torch.DoubleTensor).mean().item())
         loss_meter.update(loss.item())
         classification_loss_meter.update(classification_loss.item())
-        shape_loss_meter.update(shape_loss.item())
+        shape_loss_meter.update(shape_loss)
         pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)' % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
         if batch_idx % 20 == 0:
             for n, p in net.named_parameters():

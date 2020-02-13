@@ -148,7 +148,7 @@ class SpatialModel1(nn.Module):
             BatchNorm2d = DummyLayer  # Because the conv layer is doing its own bn
             ReLU = SpatialReLU
 
-        self.conv1 = Conv2d(3, 32, kernel_size=3, padding=1)
+        self.conv1 = Conv2d(1, 32, kernel_size=3, padding=1)
         self.conv2 = Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv3 = Conv2d(64, 128, kernel_size=3, padding=1)
         self.conv4 = Conv2d(128, 128, kernel_size=3, padding=1)

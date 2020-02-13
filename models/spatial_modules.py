@@ -7,14 +7,14 @@ class SpatialConv2d(torch.nn.Module):
     """
     For now it only accepts square kernels
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, shape_passthrough=False, concat_distance=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, shape_passthrough=False, concat_distance=False):
         super(SpatialConv2d, self).__init__()
         self.in_channels, self.out_channels, self.k, self.pad = in_channels, out_channels, kernel_size, padding
         self.shape_passthrough = shape_passthrough
         self.concat_distance = concat_distance
         self.conv = Conv2d(in_channels + (out_channels if concat_distance else 0), out_channels, kernel_size)
         # self.conv2 = Conv2d(out_channels, 1, kernel_size=1)
-        # self.conv3_shape_mux = Conv2d(out_channels, out_channels, kernel_size=1, bias=False, )
+        self.conv3_shape_mux = Conv2d(out_channels, out_channels, kernel_size=1, bias=False, )
         self.pad2d = torch.nn.ReplicationPad2d(padding)  # Replication padding makes the most sense to me
         # moved batchnorm here so I can do it before the Relu, like the original architecture
         self.bn2d = BatchNorm2d(out_channels, affine=True)  # experiment
@@ -74,8 +74,8 @@ class SpatialConv2d(torch.nn.Module):
                 self.shape_distance_weighted = fold(shape_difference, (x_padded.shape[2] - self.k + 1, x_padded.shape[3] - self.k + 1), (1, 1))
                 # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
                 # shape_distance_weighted = self.bn2d3(shape_distance_weighted)
-                # self.shape_distance_weighted_muxed = functional.relu(self.bn2d2(self.conv3_shape_mux(self.shape_distance_weighted)))
-                self.shape_distance_weighted_muxed = self.bn_distance(self.shape_distance_weighted)  # experiment: remove ReLU
+                self.shape_distance_weighted_muxed = self.bn_distance(self.conv3_shape_mux(self.shape_distance_weighted))
+                # self.shape_distance_weighted_muxed = self.bn_distance(self.shape_distance_weighted)  # experiment: remove ReLU
                 self.conv_batchnorm = self.bn2d(conv_out)
                 shape_attended_features = self.conv_batchnorm - self.shape_distance_weighted_muxed
                 # shape_attended_features = functional.leaky_relu(self.bn2d(conv_out)) * shape_distance_weighted
@@ -152,7 +152,7 @@ class SpatialConv2d(torch.nn.Module):
                 # shape_distance_weighted = self.sm2d(-shape_distance_weighted * self.concordance_coef2)
                 # shape_distance_weighted = self.bn2d3(shape_distance_weighted)
                 # shape_distance_weighted = functional.relu(self.bn2d2(self.conv3_shape_mux(self.shape_distance_weighted)))
-                shape_distance_weighted = self.bn_distance(self.shape_distance_weighted).detach()   # experiment: detach.
+                shape_distance_weighted = self.bn_distance(self.shape_distance_weighted)  # .detach()   # experiment: detach() made it much worse
                 # shape_attended_features = functional.relu(self.bn2d(shape_distance_weighted))
                 # conv_out = self.conv(torch.cat([x_padded[:, :-5, ...], torch.zeros_like(self.pad2d(shape_distance_weighted))], dim=1))
                 conv_out = self.conv(torch.cat([x_padded[:, :-5, ...], self.pad2d(shape_distance_weighted)], dim=1))
@@ -181,14 +181,14 @@ class SpatialMaxpool2d_2(torch.nn.Module):
 
     def forward(self, x):
         x = self.pad2d(x)
-        x_shape = x[:, -5:, ...].clone().detach()
+        x_shape = x[:, -5:, ...].clone().detach()  # Experiment .clone().detach()
         x_h, x_w = x.shape[2], x.shape[3]
         num_of_win2 = (x_h - self.k + 1) * (x_w - self.k + 1)
         in_channels, h, w = x.shape[1], x.shape[2], x.shape[3]
         pooled_features, idx = self.max_pool(x[:, :-5, ...])
         num_of_win = pooled_features.shape[2] * pooled_features.shape[3]
         # ********** Shape aggregation **********
-        max_unpooled = self.max_unpool(pooled_features, idx, output_size=(h, w)).detach()
+        max_unpooled = self.max_unpool(pooled_features, idx, output_size=(h, w)).detach()  # Experiment: .detach()
         # The division a heuristic taken from the Attention paper. The idea is to avoid the extremes of the softmax. It should
         # be experimented with. I think it has to do with random walks.
         shape_weights = torch.norm(max_unpooled, p=1, dim=1, keepdim=True) / torch.tensor(in_channels - 5, requires_grad=False).type(torch.FloatTensor).sqrt()
