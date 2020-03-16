@@ -12,7 +12,7 @@ import time
 import argparse
 from models import *
 from tqdm import tqdm
-from tensorboardX import SummaryWriter
+import wandb
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -23,9 +23,7 @@ parser.add_argument('--batch', default=128, type=int, help='batch size')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', default='', type=str, help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
-parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
-parser.add_argument('--graph', action='store_true', default=False, help='Logs the model graph for Tensorboard')
-parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
+parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -87,10 +85,9 @@ if args.resume:
 log_dir = join('./logs', timestamp)
 if not isdir(log_dir):
     os.makedirs(log_dir)
-writer = SummaryWriter(logdir=log_dir, comment=str(args) +'_'+ timestamp, flush_secs=5)
-writer.add_text('args', str(args))
-if args.graph:
-    writer.add_graph(net, torch.zeros(4, 8, 32, 32).to(device))  # doesn't work reliably
+
+wandb.init(project='node hijacking')
+wandb.config.update(args)
 
 criterion = nn.CrossEntropyLoss()
 if args.optim == 'sgd':
@@ -140,8 +137,8 @@ def train(epoch):
         #         if ('shape' in n or 'conv2' in n) and p.grad is not None:
         #             writer.add_histogram(n + '_grad', p.grad, epoch*len(trainloader) + batch_idx)
 
-    writer.add_scalar('Train Loss', train_loss/(batch_idx+1), epoch)
-    writer.add_scalar('Train Acc.', 100.*correct/total, epoch)
+    wandb.log({'Train Loss': train_loss/(batch_idx+1)}, step=epoch)
+    wandb.log({'Train Acc.': 100.*correct/total}, step=epoch)
     # for n, p in net.module.features.named_parameters():
     #     # logging histogram of parameters in the "shape pathway"
     #     if 'shape' in n or 'conv2' in n:
@@ -167,8 +164,8 @@ def test(epoch):
             correct += predicted.eq(targets).sum().item()
             pbar.set_description('Loss: %.3f | Acc: %.3f%% (%d/%d)'
                 % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
-        writer.add_scalar('Test Loss', test_loss/(batch_idx+1), epoch)
-        writer.add_scalar('Test Acc.', 100.*correct/total, epoch)
+        wandb.log({'Test Loss': test_loss/(batch_idx+1)}, step=epoch)
+        wandb.log({'Test Acc.': 100.*correct/total}, step=epoch)
 
     # Save checkpoint.
     acc = 100.*correct/total
@@ -191,4 +188,4 @@ for epoch in tqdm(range(start_epoch, start_epoch+200)):
     train(epoch)
     test(epoch)
 
-writer.add_hparams(vars(args), {'hparam/accuracy': best_acc})
+wandb.log({'hparam/accuracy': best_acc})
