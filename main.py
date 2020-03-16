@@ -23,7 +23,8 @@ parser.add_argument('--batch', default=128, type=int, help='batch size')
 parser.add_argument('--sparsity', default=0.0, type=float, help='convolution backward weight sparsity')
 parser.add_argument('--resume', '-r', default='', type=str, help='resume from checkpoint')
 parser.add_argument('--normal', action='store_true', default=False, help='use pytorch\'s conv layer')
-parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
+parser.add_argument('--plain', action='store_true', default=False, help='use plain VGG')
+parser.add_argument('--model', choices=['VGG_tiny', 'VGG_mini', 'VGG11', 'VGG13', 'VGG16', 'VGG19', 'sp1'], default='VGG_tiny', help='pick a VGG')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
